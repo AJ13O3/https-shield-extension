@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTPS Shield - Security Risk Assessment</title>
+    <link rel="stylesheet" href="risk-assessment.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <img src="/icons/icon-48.png" alt="HTTPS Shield" class="logo">
+            <h1>Security Risk Assessment</h1>
+        </div>
+
+        <div class="warning-box">
+            <div class="warning-icon">⚠️</div>
+            <div class="warning-content">
+                <h2>Attempting to visit an insecure HTTP site</h2>
+                <p class="url-display" id="targetUrl"></p>
+            </div>
+        </div>
+
+        <div class="risk-assessment" id="riskAssessment">
+            <h3>Risk Analysis</h3>
+            <div class="risk-loading" id="riskLoading">
+                <div class="spinner"></div>
+                <p>Analyzing security risks...</p>
+            </div>
+            <div class="risk-results" id="riskResults" style="display: none;">
+                <div class="risk-score">
+                    <span class="risk-label">Risk Level:</span>
+                    <span class="risk-value" id="riskValue"></span>
+                    <div class="risk-bar">
+                        <div class="risk-fill" id="riskFill"></div>
+                    </div>
+                </div>
+                <div class="risk-details" id="riskDetails"></div>
+            </div>
+        </div>
+
+        <div class="explanation">
+            <h3>What does this mean?</h3>
+            <p>This website uses HTTP instead of HTTPS, which means:</p>
+            <ul>
+                <li>Your connection is not encrypted</li>
+                <li>Data you send could be intercepted</li>
+                <li>The site's identity cannot be verified</li>
+            </ul>
+        </div>
+
+        <div class="actions">
+            <button class="btn btn-safe" id="goBackBtn">
+                <span class="btn-icon">←</span>
+                Go Back to Safety
+            </button>
+            <div class="secondary-actions">
+                <button class="btn btn-caution" id="viewDetailsBtn">
+                    View Detailed Risks
+                </button>
+                <button class="btn btn-danger" id="proceedBtn">
+                    Continue to HTTP Site
+                    <span class="btn-warning">(Not Recommended)</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="advanced-details" id="advancedDetails" style="display: none;">
+            <h3>Detailed Risk Information</h3>
+            <div id="detailedRiskInfo"></div>
+        </div>
+
+        <div class="footer">
+            <p>HTTPS Shield is protecting you from insecure connections</p>
+            <a href="#" id="learnMoreLink">Learn more about HTTPS security</a>
+        </div>
+    </div>
+
+    <script src="risk-assessment.js"></script>
+</body>
+</html>
