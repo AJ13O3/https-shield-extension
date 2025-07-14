@@ -61,6 +61,7 @@ aws-exports.js
 logs/
 
 # Chrome extension builds
+extension/dist/
 build/
 dist/
 *.crx

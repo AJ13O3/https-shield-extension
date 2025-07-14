@@ -1,0 +1,16 @@
+/* Basic styles for extension popup */
+.popup-container {
+    width: 300px;
+    padding: 20px;
+    font-family: Arial, sans-serif;
+}
+
+.popup-container h2 {
+    margin: 0 0 10px 0;
+    color: #2c3e50;
+}
+
+#status {
+    color: #666;
+    font-size: 14px;
+}
