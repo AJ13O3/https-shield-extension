@@ -1,0 +1,3 @@
+HTTPS Shield Icon Placeholder - 128x128
+This is a placeholder for the 128x128 icon.
+In production, this would be a PNG image.
