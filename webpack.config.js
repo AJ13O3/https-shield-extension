@@ -1,8 +1,9 @@
 const path = require('path');
+const CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = {
   entry: {
-    background: './extension/src/background.js',
+    background: './extension/src/background-enhanced.js',
     content: './extension/src/content.js',
     popup: './extension/src/popup.js'
   },
@@ -21,5 +22,15 @@ module.exports = {
   },
   optimization: {
     minimize: false
-  }
+  },
+  plugins: [
+    new CopyPlugin({
+      patterns: [
+        { 
+          from: 'extension/src/pages',
+          to: '../src/pages'
+        }
+      ]
+    })
+  ]
 };
