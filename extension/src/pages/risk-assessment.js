@@ -164,21 +164,9 @@ function toggleDetails() {
 function proceedToSite() {
     if (!targetUrl) return;
     
-    // Add this domain to the session bypass list
-    chrome.runtime.sendMessage({
-        action: 'addHttpBypass',
-        url: targetUrl,
-        tabId: tabId
-    }, function(response) {
-        if (response && response.success) {
-            // Navigate to the original HTTP URL
-            window.location.href = targetUrl;
-        } else {
-            console.error('Failed to add bypass');
-            // Try to navigate anyway
-            window.location.href = targetUrl;
-        }
-    });
+    // Since we can't block Chrome's HTTPS-only warning in MV3,
+    // we'll just navigate to the URL and let the user handle Chrome's warning
+    window.location.href = targetUrl;
 }
 
 function learnMore(e) {

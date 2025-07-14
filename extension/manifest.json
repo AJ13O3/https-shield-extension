@@ -6,8 +6,8 @@
   "permissions": [
     "activeTab",
     "storage",
-    "webRequest",
-    "webRequestBlocking",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
     "webNavigation",
     "tabs",
     "notifications"
