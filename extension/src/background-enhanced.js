@@ -404,7 +404,7 @@ class HTTPSShieldBackground {
             // First-time installation
             this.showWelcomeNotification();
             
-            // Open onboarding page
+            // Open onboarding page only on first install
             chrome.tabs.create({
                 url: chrome.runtime.getURL('/src/pages/welcome.html')
             });
