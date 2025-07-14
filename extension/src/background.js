@@ -26,6 +26,13 @@ class HTTPSShieldBackground {
                 this.checkForHTTPSite(tabId, tab);
             }
         });
+
+        // Monitor navigation errors to detect HTTPS-only blocks
+        chrome.webNavigation.onErrorOccurred.addListener((details) => {
+            if (details.frameId === 0) { // Main frame only
+                this.handleNavigationError(details);
+            }
+        });
     }
 
     async checkForHTTPSite(tabId, tab) {
@@ -229,6 +236,46 @@ class HTTPSShieldBackground {
     async getSettings() {
         const result = await chrome.storage.sync.get(['settings']);
         return result.settings || {};
+    }
+
+    async handleNavigationError(details) {
+        console.log('Navigation error:', details);
+        
+        // Check if this might be an HTTPS-only mode block
+        if (details.url.startsWith('http://') && 
+            (details.error === 'net::ERR_SSL_PROTOCOL_ERROR' ||
+             details.error === 'net::ERR_CONNECTION_REFUSED' ||
+             details.error === 'net::ERR_CONNECTION_RESET')) {
+            
+            console.log('Possible HTTPS-only mode block detected');
+            
+            // Store the blocked URL
+            await chrome.storage.session.set({
+                [`blocked_${details.tabId}`]: {
+                    url: details.url,
+                    timestamp: Date.now()
+                }
+            });
+            
+            // Update extension badge
+            chrome.action.setBadgeText({ 
+                text: '!',
+                tabId: details.tabId 
+            });
+            chrome.action.setBadgeBackgroundColor({ 
+                color: '#f44336',
+                tabId: details.tabId 
+            });
+            
+            // Show notification
+            chrome.notifications.create({
+                type: 'basic',
+                iconUrl: chrome.runtime.getURL('/icons/icon-48.png'),
+                title: 'HTTP Site Blocked',
+                message: `Chrome blocked ${new URL(details.url).hostname}. Click the HTTPS Shield icon for risk assessment.`,
+                priority: 2
+            });
+        }
     }
 }
 

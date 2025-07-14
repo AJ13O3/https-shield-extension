@@ -28,6 +28,14 @@ class HTTPSShieldPopup {
             // Load current tab info
             await this.loadCurrentTab();
             
+            // Check for blocked site
+            const blockedSite = await this.checkForBlockedSite();
+            if (blockedSite) {
+                this.showBlockedSiteUI(blockedSite);
+                this.showLoading(false);
+                return;
+            }
+            
             // Load settings and stats
             await this.loadSettings();
             await this.loadStats();
@@ -268,6 +276,139 @@ class HTTPSShieldPopup {
         // Simple error display - in production we'd have a proper error UI
         console.error(message);
         alert(`Error: ${message}`);
+    }
+
+    async checkForBlockedSite() {
+        try {
+            // Get blocked site info for current tab
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tabs[0]) return null;
+            
+            const tabId = tabs[0].id;
+            const result = await chrome.storage.session.get([`blocked_${tabId}`]);
+            const blockedInfo = result[`blocked_${tabId}`];
+            
+            // Check if this is recent (within last 5 minutes)
+            if (blockedInfo && (Date.now() - blockedInfo.timestamp < 5 * 60 * 1000)) {
+                return blockedInfo;
+            }
+            
+            return null;
+        } catch (error) {
+            console.error('Error checking for blocked site:', error);
+            return null;
+        }
+    }
+
+    showBlockedSiteUI(blockedSite) {
+        // Replace popup content with blocked site info
+        document.body.innerHTML = `
+            <div class="blocked-site-container">
+                <div class="header">
+                    <h2>🛡️ HTTPS Shield</h2>
+                </div>
+                <div class="blocked-warning">
+                    <div class="warning-icon">⚠️</div>
+                    <h3>HTTP Site Blocked</h3>
+                    <p class="blocked-url">${blockedSite.url}</p>
+                    <p class="warning-text">Chrome's HTTPS-only mode blocked this insecure connection.</p>
+                </div>
+                <div class="actions">
+                    <button id="analyze-risk" class="primary-btn">
+                        View Risk Assessment
+                    </button>
+                    <button id="close-popup" class="secondary-btn">
+                        Close
+                    </button>
+                </div>
+            </div>
+            <style>
+                body {
+                    width: 350px;
+                    margin: 0;
+                    font-family: system-ui, -apple-system, sans-serif;
+                }
+                .blocked-site-container {
+                    padding: 20px;
+                }
+                .header h2 {
+                    margin: 0 0 20px 0;
+                    font-size: 20px;
+                    color: #333;
+                }
+                .blocked-warning {
+                    background: #fff3e0;
+                    border: 1px solid #ff9800;
+                    border-radius: 8px;
+                    padding: 20px;
+                    text-align: center;
+                    margin-bottom: 20px;
+                }
+                .warning-icon {
+                    font-size: 48px;
+                    margin-bottom: 10px;
+                }
+                .blocked-warning h3 {
+                    margin: 0 0 10px 0;
+                    color: #e65100;
+                }
+                .blocked-url {
+                    font-family: monospace;
+                    font-size: 12px;
+                    word-break: break-all;
+                    color: #666;
+                    margin: 10px 0;
+                }
+                .warning-text {
+                    font-size: 14px;
+                    color: #666;
+                    margin: 10px 0 0 0;
+                }
+                .actions {
+                    display: flex;
+                    gap: 10px;
+                }
+                .primary-btn, .secondary-btn {
+                    flex: 1;
+                    padding: 10px;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    cursor: pointer;
+                    transition: opacity 0.2s;
+                }
+                .primary-btn {
+                    background: #1976d2;
+                    color: white;
+                }
+                .primary-btn:hover {
+                    opacity: 0.9;
+                }
+                .secondary-btn {
+                    background: #f5f5f5;
+                    color: #333;
+                }
+                .secondary-btn:hover {
+                    background: #e0e0e0;
+                }
+            </style>
+        `;
+        
+        // Add event listeners
+        document.getElementById('analyze-risk').addEventListener('click', () => {
+            chrome.runtime.sendMessage({
+                action: 'openRiskAssessment',
+                url: blockedSite.url
+            });
+            window.close();
+        });
+        
+        document.getElementById('close-popup').addEventListener('click', () => {
+            window.close();
+        });
+        
+        // Clear the badge
+        chrome.action.setBadgeText({ text: '' });
     }
 }
 
