@@ -7,9 +7,79 @@
 </head>
 <body>
     <div class="popup-container">
-        <h2>HTTPS Shield</h2>
-        <div id="status">Extension loaded - Week 2 implementation coming soon</div>
+        <header class="popup-header">
+            <div class="logo">🛡️</div>
+            <h1>HTTPS Shield</h1>
+            <div class="version">v0.1.0</div>
+        </header>
+
+        <section class="current-status">
+            <h3>Current Page</h3>
+            <div id="current-url" class="url-display">Loading...</div>
+            <div id="current-risk" class="risk-status">
+                <span class="risk-score" id="risk-score">--</span>
+                <span class="risk-level" id="risk-level">Unknown</span>
+            </div>
+        </section>
+
+        <section class="quick-stats">
+            <h3>Today's Activity</h3>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-number" id="sites-visited">0</span>
+                    <span class="stat-label">Sites Visited</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="warnings-shown">0</span>
+                    <span class="stat-label">Warnings Shown</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="https-redirects">0</span>
+                    <span class="stat-label">HTTPS Redirects</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="controls">
+            <div class="control-item">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="extension-enabled" checked>
+                    <span class="slider"></span>
+                </label>
+                <span class="control-label">Extension Enabled</span>
+            </div>
+            
+            <div class="control-item">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="notifications-enabled" checked>
+                    <span class="slider"></span>
+                </label>
+                <span class="control-label">Show Notifications</span>
+            </div>
+        </section>
+
+        <section class="risk-settings">
+            <h3>Risk Threshold</h3>
+            <div class="slider-container">
+                <input type="range" id="risk-threshold" min="0" max="100" value="50" class="risk-slider">
+                <div class="slider-labels">
+                    <span>Low</span>
+                    <span id="threshold-value">50</span>
+                    <span>High</span>
+                </div>
+            </div>
+        </section>
+
+        <footer class="popup-footer">
+            <button id="view-history" class="btn btn-secondary">View History</button>
+            <button id="clear-data" class="btn btn-secondary">Clear Data</button>
+        </footer>
+
+        <div id="loading" class="loading-overlay" style="display: none;">
+            <div class="spinner"></div>
+        </div>
     </div>
+
     <script src="../dist/popup.js"></script>
 </body>
 </html>
