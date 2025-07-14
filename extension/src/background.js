@@ -194,7 +194,6 @@ class HTTPSShieldBackground {
         // Show welcome notification on first install
         chrome.notifications?.create({
             type: 'basic',
-            iconUrl: 'icons/icon-48.png',
             title: 'HTTPS Shield Installed',
             message: 'Your AI-powered HTTPS security assistant is ready!'
         });
