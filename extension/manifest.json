@@ -34,6 +34,7 @@
       "src/pages/risk-assessment.css",
       "src/pages/risk-assessment.js",
       "src/pages/welcome.html",
+      "src/pages/welcome.js",
       "icons/*"
     ],
     "matches": ["<all_urls>"]

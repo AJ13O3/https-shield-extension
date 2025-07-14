@@ -180,8 +180,8 @@
         </div>
         
         <div class="actions">
-            <a href="#" class="btn btn-primary" onclick="testExtension()">Test the Extension</a>
-            <a href="#" class="btn btn-secondary" onclick="viewSettings()">View Settings</a>
+            <a href="#" class="btn btn-primary" id="testBtn">Test the Extension</a>
+            <a href="#" class="btn btn-secondary" id="settingsBtn">View Settings</a>
         </div>
         
         <div class="footer">
@@ -189,24 +189,6 @@
         </div>
     </div>
     
-    <script>
-        function testExtension() {
-            // Open a test HTTP site in a new tab
-            chrome.tabs.create({ url: 'http://example.com' });
-        }
-        
-        function viewSettings() {
-            // Open the extension popup
-            chrome.action.openPopup();
-        }
-        
-        // Optional: Close this tab after a delay
-        setTimeout(() => {
-            const urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.get('autoclose') === 'true') {
-                window.close();
-            }
-        }, 10000);
-    </script>
+    <script src="welcome.js"></script>
 </body>
 </html>
