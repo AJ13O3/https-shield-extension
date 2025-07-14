@@ -1,31 +1,36 @@
 # HTTPS Shield Extension 🛡️
 
-> AI-powered browser extension that enhances HTTPS-only mode warnings with real-time risk assessment and interactive chatbot support
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Chrome Web Store](https://img.shields.io/badge/Chrome-Extension-green.svg)](https://chrome.google.com/webstore)
+An AI-powered browser extension that enhances HTTPS-only mode warnings with real-time risk assessment and interactive chatbot support.
 
 ## 🎯 Project Overview
 
-This project investigates HTTPS-only modes in web browsers and develops an AI-powered extension to improve user understanding and decision-making when encountering security warnings.
+This project investigates HTTPS-only modes in web browsers and develops an AI-powered extension to improve user understanding and decision-making when encountering security warnings. The extension provides personalized risk assessments and an LLM-based chatbot to help users make informed decisions about website security.
 
-### Key Features
-- 🔍 Real-time risk assessment using ML models (URLBERT + XGBoost)
-- 💬 Interactive LLM-powered chatbot for user guidance
-- 📊 Comprehensive risk scoring based on multiple data sources
-- 🚀 Cloud-based processing for minimal performance impact
-- 📈 User behavior analytics for research purposes
+## ✨ Key Features
 
-## 🏗️ Architecture
+- **Real-time Risk Assessment**: Dual AI model system (URLBERT + XGBoost) analyzes URLs for potential threats
+- **Interactive Chatbot**: LLM-powered assistant provides contextual explanations and guidance
+- **Cloud-Based Processing**: Minimal performance impact on user's browser
+- **Comprehensive Analysis**: Integrates data from Google Safe Browsing, VirusTotal, PhishTank, and WHOIS
+- **User-Friendly Interface**: Non-intrusive overlay with color-coded risk levels
 
-## 🚀 Quick Start
+## 🏗️ System Architecture
+
+The extension follows a cloud-native architecture:
+- **Frontend**: Chrome browser extension (JavaScript)
+- **Backend**: Python FastAPI hosted on AWS Lambda
+- **ML Models**: URLBERT and XGBoost models deployed on Amazon SageMaker
+- **Database**: Amazon DynamoDB for session and risk assessment data
+- **AI Services**: Amazon Bedrock for LLM chatbot functionality
+
+## 🚀 Getting Started
 
 ### Prerequisites
+
 - Python 3.9+
 - Node.js 18+
-- AWS CLI configured
 - Chrome/Chromium browser
+- AWS account with configured credentials
 
 ### Installation
 
@@ -33,15 +38,46 @@ This project investigates HTTPS-only modes in web browsers and develops an AI-po
    ```bash
    git clone https://github.com/YOUR_USERNAME/https-shield-extension.git
    cd https-shield-extension
-   # Run the setup script
-   
-2. **Set up the development environment**
+   ```
+
+2. **Set up the backend**
    ```bash
-  ./scripts/setup/setup-dev.sha
+   cd backend
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
 
-3. **Install the extension in Chrome**
-Open Chrome and navigate to chrome://extensions/
-Enable "Developer mode"
-Click "Load unpacked" and select the extension/dist folder
+3. **Set up the extension**
+   ```bash
+   cd ../extension
+   npm install
+   npm run build
+   ```
 
+4. **Load the extension in Chrome**
+   - Open Chrome and navigate to `chrome://extensions/`
+   - Enable "Developer mode"
+   - Click "Load unpacked" and select the `extension/dist` folder
 
+## 📁 Project Structure
+
+```
+https-shield-extension/
+├── extension/              # Browser extension source code
+│   ├── src/
+│   │   ├── background/    # Background scripts
+│   │   ├── content/       # Content scripts
+│   │   └── popup/         # Extension popup UI
+│   └── manifest.json      # Extension manifest
+├── backend/               # Python FastAPI backend
+│   ├── app/
+│   │   ├── api/          # API endpoints
+│   │   ├── models/       # Data models
+│   │   └── services/     # Business logic
+│   └── requirements.txt
+├── ml-models/            # Machine learning models
+│   ├── training/         # Model training scripts
+│   └── inference/        # Model inference code
+└── research/             # Research materials and user study data
+```
