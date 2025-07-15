@@ -13,6 +13,7 @@ import os
 import re
 import hashlib
 import time
+import asyncio
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional, List
@@ -22,6 +23,10 @@ from decimal import Decimal
 
 # Import logger configuration
 from logger_config import setup_logger, log_lambda_event, log_performance_metric, log_error, log_api_request
+
+# Import ML and external API services
+from ml_inference import ml_inference_service
+from external_apis import external_api_service
 
 # Configure logging
 logger = setup_logger(__name__)
@@ -52,6 +57,10 @@ class DecimalEncoder(json.JSONEncoder):
         return super(DecimalEncoder, self).default(obj)
 
 def lambda_handler(event, context):
+    """Main Lambda handler - wraps async function"""
+    return asyncio.run(async_lambda_handler(event, context))
+
+async def async_lambda_handler(event, context):
     """
     Main Lambda handler for HTTPS risk assessment
     
@@ -118,7 +127,7 @@ def lambda_handler(event, context):
         
         # Perform risk assessment
         assessment_start = time.time()
-        assessment = perform_risk_assessment(url, error_code, user_agent)
+        assessment = await perform_risk_assessment(url, error_code, user_agent)
         log_performance_metric(logger, 'risk_assessment', (time.time() - assessment_start) * 1000)
         
         # Cache the result
@@ -140,10 +149,16 @@ def lambda_handler(event, context):
     except Exception as e:
         log_error(logger, e, {'event': event, 'url': url if 'url' in locals() else 'unknown'})
         return error_response(500, 'Internal server error')
+    finally:
+        # Clean up external API service
+        try:
+            await external_api_service.close()
+        except Exception:
+            pass
 
-def perform_risk_assessment(url: str, error_code: str, user_agent: str) -> Dict[str, Any]:
+async def perform_risk_assessment(url: str, error_code: str, user_agent: str) -> Dict[str, Any]:
     """
-    Perform comprehensive risk assessment for a URL
+    Perform comprehensive risk assessment for a URL using ML models and external APIs
     
     Args:
         url: The URL to analyze
@@ -169,11 +184,44 @@ def perform_risk_assessment(url: str, error_code: str, user_agent: str) -> Dict[
         }
     }
     
-    # Calculate risk score
-    risk_score = calculate_risk_score(assessment['analysis'])
-    assessment['riskScore'] = risk_score
-    assessment['riskLevel'] = get_risk_level(risk_score)
-    assessment['recommendations'] = get_recommendations(assessment['riskLevel'], assessment['analysis'])
+    # Get external intelligence data
+    try:
+        external_data = await external_api_service.get_combined_intelligence(url)
+        assessment['external_intelligence'] = external_data
+    except Exception as e:
+        log_error(logger, e, {'operation': 'external_intelligence', 'url': url})
+        external_data = {'combined_risk_score': 0.0, 'domain_age': 0, 'reputation_score': 0.5}
+        assessment['external_intelligence'] = {'error': 'External intelligence failed'}
+    
+    # Get ML model predictions
+    try:
+        ml_prediction = await ml_inference_service.get_combined_ml_prediction(
+            url, 
+            assessment['analysis']['domain_analysis'],
+            assessment['analysis']['error_analysis'],
+            external_data
+        )
+        assessment['ml_prediction'] = ml_prediction
+    except Exception as e:
+        log_error(logger, e, {'operation': 'ml_prediction', 'url': url})
+        ml_prediction = {'ml_risk_score': 0.0, 'ml_confidence': 0.0}
+        assessment['ml_prediction'] = {'error': 'ML prediction failed'}
+    
+    # Calculate enhanced risk score
+    enhanced_risk_score = calculate_enhanced_risk_score(
+        assessment['analysis'],
+        external_data,
+        ml_prediction
+    )
+    
+    assessment['riskScore'] = enhanced_risk_score
+    assessment['riskLevel'] = get_risk_level(enhanced_risk_score)
+    assessment['recommendations'] = get_enhanced_recommendations(
+        assessment['riskLevel'], 
+        assessment['analysis'],
+        external_data,
+        ml_prediction
+    )
     
     return assessment
 
@@ -304,7 +352,7 @@ def analyze_url_structure(url: str) -> Dict[str, Any]:
     return analysis
 
 def calculate_risk_score(analysis: Dict[str, Any]) -> int:
-    """Calculate overall risk score from analysis results"""
+    """Calculate basic risk score from analysis results (fallback method)"""
     base_score = 0
     
     # Protocol analysis (40% weight)
@@ -337,6 +385,65 @@ def calculate_risk_score(analysis: Dict[str, Any]) -> int:
     
     return min(base_score, 100)
 
+def calculate_enhanced_risk_score(analysis: Dict[str, Any], 
+                                external_data: Dict[str, Any], 
+                                ml_prediction: Dict[str, Any]) -> int:
+    """Calculate enhanced risk score using ML models and external intelligence"""
+    
+    # Get basic analysis score (30% weight)
+    basic_score = calculate_risk_score(analysis)
+    
+    # Get ML prediction score (40% weight)
+    ml_score = ml_prediction.get('ml_risk_score', 0.0)
+    ml_confidence = ml_prediction.get('ml_confidence', 0.0)
+    
+    # Get external intelligence score (30% weight)
+    external_score = external_data.get('combined_risk_score', 0.0)
+    
+    # Calculate weighted score
+    weights = {
+        'basic': 0.3,
+        'ml': 0.4,
+        'external': 0.3
+    }
+    
+    # Adjust ML weight based on confidence
+    if ml_confidence < 0.5:
+        # Lower confidence - reduce ML weight, increase basic weight
+        weights['ml'] = 0.2
+        weights['basic'] = 0.5
+    elif ml_confidence > 0.8:
+        # High confidence - increase ML weight
+        weights['ml'] = 0.5
+        weights['basic'] = 0.2
+    
+    # Calculate final score
+    final_score = (
+        basic_score * weights['basic'] +
+        ml_score * weights['ml'] +
+        external_score * weights['external']
+    )
+    
+    # Apply additional risk factors
+    risk_multiplier = 1.0
+    
+    # Very new domains are riskier
+    domain_age = external_data.get('domain_age', 365)
+    if domain_age < 30:
+        risk_multiplier += 0.3
+    elif domain_age < 90:
+        risk_multiplier += 0.2
+    
+    # Known threats get maximum risk
+    threat_indicators = external_data.get('threat_indicators', [])
+    if threat_indicators:
+        risk_multiplier += 0.5
+    
+    # Apply multiplier and cap at 100
+    final_score = min(final_score * risk_multiplier, 100)
+    
+    return int(final_score)
+
 def get_risk_level(score: int) -> str:
     """Convert numeric score to risk level"""
     if score >= 80:
@@ -349,7 +456,7 @@ def get_risk_level(score: int) -> str:
         return 'LOW'
 
 def get_recommendations(risk_level: str, analysis: Dict[str, Any]) -> List[str]:
-    """Generate contextual recommendations based on risk level and analysis"""
+    """Generate basic recommendations (fallback method)"""
     recommendations = []
     
     # Base recommendations by risk level
@@ -389,6 +496,68 @@ def get_recommendations(risk_level: str, analysis: Dict[str, Any]) -> List[str]:
         recommendations.append('Domain contains suspicious patterns')
     
     return recommendations
+
+def get_enhanced_recommendations(risk_level: str, analysis: Dict[str, Any], 
+                               external_data: Dict[str, Any], 
+                               ml_prediction: Dict[str, Any]) -> List[str]:
+    """Generate enhanced recommendations using ML and external intelligence"""
+    recommendations = []
+    
+    # Start with base recommendations
+    recommendations.extend(get_recommendations(risk_level, analysis))
+    
+    # Add ML-based recommendations
+    if 'individual_predictions' in ml_prediction:
+        models_used = ml_prediction.get('models_used', [])
+        if 'urlbert' in models_used:
+            recommendations.append('AI analysis indicates potential security concerns')
+        if 'xgboost' in models_used:
+            recommendations.append('Machine learning model flagged suspicious URL patterns')
+    
+    # Add external intelligence recommendations
+    threat_indicators = external_data.get('threat_indicators', [])
+    if threat_indicators:
+        recommendations.append('External security services have flagged this site')
+        for indicator in threat_indicators[:3]:  # Show max 3 indicators
+            recommendations.append(f'Security alert: {indicator}')
+    
+    # Domain age recommendations
+    domain_age = external_data.get('domain_age', 365)
+    if domain_age < 30:
+        recommendations.append('This domain was registered very recently (high risk)')
+    elif domain_age < 90:
+        recommendations.append('This domain is relatively new (moderate risk)')
+    
+    # Reputation-based recommendations
+    reputation_score = external_data.get('reputation_score', 0.5)
+    if reputation_score < 0.3:
+        recommendations.append('This site has poor reputation scores')
+    elif reputation_score > 0.8:
+        recommendations.append('This site has good reputation scores')
+    
+    # VirusTotal specific recommendations
+    if 'virustotal' in external_data:
+        vt_data = external_data['virustotal']
+        if not vt_data.get('is_safe', True):
+            detections = vt_data.get('detections', 0)
+            total = vt_data.get('total_scanners', 0)
+            recommendations.append(f'VirusTotal detected threats: {detections}/{total} scanners')
+    
+    # Google Safe Browsing recommendations
+    if 'google_safebrowsing' in external_data:
+        gsb_data = external_data['google_safebrowsing']
+        if not gsb_data.get('is_safe', True):
+            recommendations.append('Google Safe Browsing flagged this site as dangerous')
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_recommendations = []
+    for rec in recommendations:
+        if rec not in seen:
+            seen.add(rec)
+            unique_recommendations.append(rec)
+    
+    return unique_recommendations
 
 def generate_cache_key(url: str, error_code: str) -> str:
     """Generate cache key for DynamoDB storage"""
