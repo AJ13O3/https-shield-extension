@@ -153,8 +153,8 @@ class HTTPSShieldBackground {
                 case 'allowHttpOnce':
                     // Use sender tab ID if available, otherwise use provided tabId
                     const effectiveTabId = sender.tab?.id || message.tabId;
-                    await this.allowHttpDomainOnce(message.url, effectiveTabId);
-                    sendResponse({ success: true });
+                    const result = await this.allowHttpDomainOnce(message.url, effectiveTabId);
+                    sendResponse(result);
                     break;
 
 
@@ -229,25 +229,20 @@ class HTTPSShieldBackground {
                 await this.removeBypass(domain);
             }, 30 * 60 * 1000);
             
-            // Add a small delay to ensure the rule is processed by Chrome
-            setTimeout(() => {
-                // Navigate to the HTTP URL
-                if (tabId) {
-                    console.log(`Navigating tab ${tabId} to ${url} after bypass rule is active`);
-                    chrome.tabs.update(tabId, { url: url }, (tab) => {
-                        if (chrome.runtime.lastError) {
-                            console.error('Navigation error:', chrome.runtime.lastError);
-                        } else {
-                            console.log('Navigation initiated successfully');
-                        }
-                    });
-                } else {
-                    console.log('No tab ID provided, letting page handle navigation');
-                }
-            }, 100); // 100ms delay to ensure rule is active
+            // Verify the rule was created successfully
+            const success = await this.verifyBypassRule(ruleId);
+            if (!success) {
+                throw new Error('Failed to verify bypass rule creation');
+            }
+            
+            console.log(`Bypass rule ${ruleId} verified and ready for navigation`);
+            
+            // Return success - let the calling page handle navigation
+            return { success: true, ruleId, domain };
             
         } catch (error) {
             console.error('Error allowing HTTP domain:', error);
+            throw error;
         }
     }
 
@@ -272,6 +267,23 @@ class HTTPSShieldBackground {
             if (bypass.tabId === tabId) {
                 this.removeBypass(domain);
             }
+        }
+    }
+
+    async verifyBypassRule(ruleId) {
+        try {
+            const rules = await chrome.declarativeNetRequest.getDynamicRules();
+            const rule = rules.find(r => r.id === ruleId);
+            if (rule) {
+                console.log(`Bypass rule ${ruleId} verified successfully`);
+                return true;
+            } else {
+                console.error(`Bypass rule ${ruleId} not found in dynamic rules`);
+                return false;
+            }
+        } catch (error) {
+            console.error('Error verifying bypass rule:', error);
+            return false;
         }
     }
 
