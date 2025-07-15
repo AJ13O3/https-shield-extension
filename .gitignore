@@ -6,6 +6,7 @@ https-everywhere-master
 PRE-WARNING-INTERCEPTION.md
 TEST-PRE-WARNING.md
 TESTING-INTERCEPTION.md
+SAGEMAKER_SETUP.md
 
 # Node.js
 node_modules/
