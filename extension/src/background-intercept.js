@@ -63,6 +63,14 @@ class HTTPSShieldBackground {
                 
                 // Only intercept public domains, not local/private ones
                 if (this.shouldInterceptDomain(url.hostname)) {
+                    // Check if there's an active bypass rule for this domain
+                    const bypassExists = this.bypassedDomains.has(url.hostname);
+                    
+                    if (bypassExists) {
+                        console.log('HTTP navigation allowed - bypass rule active for:', url.hostname);
+                        return; // Allow navigation to proceed
+                    }
+                    
                     console.log('HTTP navigation detected, attempting immediate redirect:', details.url);
                     
                     // Store pending navigation
