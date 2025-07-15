@@ -4,7 +4,7 @@ const CopyPlugin = require('copy-webpack-plugin');
 module.exports = {
   entry: {
     background: './extension/src/background-intercept.js',
-    content: './extension/src/content.js',
+    content: './extension/src/content-enhanced.js',
     popup: './extension/src/popup.js'
   },
   output: {

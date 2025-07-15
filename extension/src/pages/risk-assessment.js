@@ -178,63 +178,62 @@ function toggleDetails() {
     }
 }
 
-function proceedToSite() {
+async function proceedToSite() {
     if (!targetUrl) return;
     
     const proceedBtn = document.getElementById('proceedBtn');
-    const originalText = proceedBtn.textContent;
+    const originalText = proceedBtn.innerHTML;
     
     // Show loading state
     proceedBtn.disabled = true;
     proceedBtn.textContent = 'Setting up secure bypass...';
     proceedBtn.style.opacity = '0.7';
     
-    // If this was an intercepted request, we need to allow it temporarily
-    if (intercepted === 'true') {
-        console.log('Requesting bypass for:', targetUrl);
-        
-        chrome.runtime.sendMessage({
-            action: 'allowHttpOnce',
-            url: targetUrl,
-            tabId: tabId ? parseInt(tabId) : null
-        }, function(response) {
+    let retries = 0;
+    const maxRetries = 3;
+    
+    const attemptBypass = async () => {
+        try {
+            console.log(`Requesting bypass for: ${targetUrl} (attempt ${retries + 1})`);
+            
+            const response = await chrome.runtime.sendMessage({
+                action: 'allowHttpOnce',
+                url: targetUrl,
+                tabId: tabId ? parseInt(tabId) : null
+            });
+            
             if (response && response.success) {
-                // The background script will handle navigation
-                // Show success briefly before navigation
-                proceedBtn.textContent = 'Redirecting...';
-                console.log('Bypass set successfully, navigation will happen automatically');
-                
-                // Add a visual indicator that navigation is happening
-                setTimeout(() => {
-                    // If we're still here after 2 seconds, something went wrong
-                    if (document.hasFocus()) {
-                        console.error('Navigation did not occur as expected');
-                        proceedBtn.disabled = false;
-                        proceedBtn.textContent = originalText;
-                        proceedBtn.style.opacity = '1';
-                        alert('There was an issue proceeding to the site. Please try again.');
-                    }
-                }, 2000);
-            } else {
-                console.error('Failed to allow HTTP bypass:', response?.error);
-                // Reset button
-                proceedBtn.disabled = false;
-                proceedBtn.textContent = originalText;
-                proceedBtn.style.opacity = '1';
-                
-                // Fallback: try to navigate anyway
-                if (confirm('There was an issue with the secure bypass. Would you like to try navigating directly?')) {
+                // For intercepted requests, wait a bit longer then navigate
+                if (intercepted === 'true') {
+                    proceedBtn.textContent = 'Navigating to site...';
+                    setTimeout(() => {
+                        window.location.href = targetUrl;
+                    }, 200);
+                } else {
+                    // Non-intercepted, just navigate
                     window.location.href = targetUrl;
                 }
+            } else {
+                throw new Error('Bypass request failed');
             }
-        });
-    } else {
-        // Not intercepted, just navigate
-        proceedBtn.textContent = 'Redirecting...';
-        setTimeout(() => {
-            window.location.href = targetUrl;
-        }, 100);
-    }
+        } catch (error) {
+            console.error('Bypass attempt failed:', error);
+            if (retries < maxRetries) {
+                retries++;
+                proceedBtn.textContent = `Retrying... (${retries}/${maxRetries})`;
+                setTimeout(attemptBypass, 500);
+            } else {
+                // All retries failed, restore button
+                proceedBtn.disabled = false;
+                proceedBtn.innerHTML = originalText;
+                proceedBtn.style.opacity = '1';
+                alert('Unable to proceed to the site. Please try again.');
+            }
+        }
+    };
+    
+    // Start the bypass attempt
+    await attemptBypass();
 }
 
 function learnMore(e) {

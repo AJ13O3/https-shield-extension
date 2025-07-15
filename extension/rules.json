@@ -28,7 +28,7 @@
       "type": "allow"
     },
     "condition": {
-      "regexFilter": "^http://\\[::1\\](:[0-9]+)?(/.*)?$",
+      "regexFilter": "^http://192\\.168\\.[0-9]+\\.[0-9]+(:[0-9]+)?(/.*)?$",
       "resourceTypes": ["main_frame"]
     }
   },
@@ -39,7 +39,7 @@
       "type": "allow"
     },
     "condition": {
-      "regexFilter": "^http://192\\.168\\.[0-9]+\\.[0-9]+(:[0-9]+)?(/.*)?$",
+      "regexFilter": "^http://10\\.[0-9]+\\.[0-9]+\\.[0-9]+(:[0-9]+)?(/.*)?$",
       "resourceTypes": ["main_frame"]
     }
   },
@@ -50,54 +50,7 @@
       "type": "allow"
     },
     "condition": {
-      "regexFilter": "^http://10\\.[0-9]+\\.[0-9]+\\.[0-9]+(:[0-9]+)?(/.*)?$",
-      "resourceTypes": ["main_frame"]
-    }
-  },
-  {
-    "id": 1005,
-    "priority": 10000,
-    "action": {
-      "type": "allow"
-    },
-    "condition": {
       "regexFilter": "^http://172\\.(1[6-9]|2[0-9]|3[01])\\.[0-9]+\\.[0-9]+(:[0-9]+)?(/.*)?$",
-      "resourceTypes": ["main_frame"]
-    }
-  },
-  {
-    "id": 1006,
-    "priority": 10000,
-    "action": {
-      "type": "allow"
-    },
-    "condition": {
-      "regexFilter": "^http://[^/]+\\.local(:[0-9]+)?(/.*)?$",
-      "resourceTypes": ["main_frame"]
-    }
-  },
-  {
-    "id": 1007,
-    "priority": 10000,
-    "action": {
-      "type": "allow"
-    },
-    "condition": {
-      "regexFilter": "^http://[^/]+\\.localhost(:[0-9]+)?(/.*)?$",
-      "resourceTypes": ["main_frame"]
-    }
-  },
-  {
-    "id": 1,
-    "priority": 9999,
-    "action": {
-      "type": "redirect",
-      "redirect": {
-        "extensionPath": "/src/pages/risk-assessment.html?target=\\0&intercepted=true"
-      }
-    },
-    "condition": {
-      "regexFilter": "^http://([^/]+)(/.*)?(\\?.*)?$",
       "resourceTypes": ["main_frame"]
     }
   }

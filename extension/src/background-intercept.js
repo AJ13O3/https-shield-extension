@@ -4,8 +4,19 @@
 class HTTPSShieldBackground {
     constructor() {
         this.bypassedDomains = new Map(); // Track temporarily allowed domains
+        this.pendingNavigations = new Map(); // Track pending HTTP navigations
         this.setupEventListeners();
         this.initializeExtension();
+    }
+
+    // Check if a domain should be intercepted (not local/private)
+    shouldInterceptDomain(hostname) {
+        return !['localhost', '127.0.0.1', '[::1]'].includes(hostname) && 
+               !hostname.match(/^192\.168\./) && 
+               !hostname.match(/^10\./) && 
+               !hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\./) &&
+               !hostname.endsWith('.local') &&
+               !hostname.endsWith('.localhost');
     }
 
     setupEventListeners() {
@@ -35,44 +46,94 @@ class HTTPSShieldBackground {
             this.cleanupTabBypasses(tabId);
         });
 
-        // Periodically check if rules are still active
+        // Periodically clean up old bypass rules
         setInterval(async () => {
-            const rules = await chrome.declarativeNetRequest.getDynamicRules();
-            const hasInterceptRule = rules.some(rule => rule.id === 1);
-            if (!hasInterceptRule) {
-                console.log('Intercept rule missing, re-establishing...');
-                await this.setupInterceptionRules();
+            const now = Date.now();
+            for (const [domain, bypass] of this.bypassedDomains) {
+                if (now - bypass.timestamp > 30 * 60 * 1000) {
+                    await this.removeBypass(domain);
+                }
             }
-        }, 60000); // Check every minute
+        }, 5 * 60 * 1000); // Check every 5 minutes
+
+        // Early navigation detection with immediate redirect
+        chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+            if (details.frameId === 0 && details.url.startsWith('http://')) {
+                const url = new URL(details.url);
+                
+                // Only intercept public domains, not local/private ones
+                if (this.shouldInterceptDomain(url.hostname)) {
+                    console.log('HTTP navigation detected, attempting immediate redirect:', details.url);
+                    
+                    // Store pending navigation
+                    this.pendingNavigations.set(details.tabId, {
+                        url: details.url,
+                        timestamp: Date.now()
+                    });
+                    
+                    // Immediately redirect to our risk assessment page
+                    const riskAssessmentUrl = chrome.runtime.getURL(
+                        `/src/pages/risk-assessment.html?target=${encodeURIComponent(details.url)}&intercepted=true`
+                    );
+                    
+                    try {
+                        await chrome.tabs.update(details.tabId, { url: riskAssessmentUrl });
+                        console.log('Successfully redirected to risk assessment page');
+                    } catch (error) {
+                        console.error('Failed to redirect immediately:', error);
+                    }
+                } else {
+                    console.log('Skipping local/private domain:', url.hostname);
+                }
+            }
+        });
+        
+
+        // Monitor for Chrome's HTTPS-Only warning page and HTTP URLs
+        chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+            // Case 1: Chrome's error page detected
+            if (changeInfo.url && changeInfo.url.includes('chrome-error://chromewebdata/')) {
+                console.log('Chrome error page detected:', changeInfo.url);
+                const pending = this.pendingNavigations.get(tabId);
+                if (pending && Date.now() - pending.timestamp < 3000) {
+                    // Quickly redirect to our warning page
+                    console.log('Chrome HTTPS-Only warning detected, redirecting to our page');
+                    chrome.tabs.update(tabId, {
+                        url: chrome.runtime.getURL(
+                            `/src/pages/risk-assessment.html?target=${encodeURIComponent(pending.url)}&intercepted=true`
+                        )
+                    });
+                    this.pendingNavigations.delete(tabId);
+                }
+            }
+            
+        });
     }
 
     async setupInterceptionRules() {
-        console.log('Verifying HTTP interception rules...');
+        console.log('Setting up bypass rule management...');
         
         try {
-            // Clear any old dynamic intercept rules (we use static rules now)
-            // But keep bypass rules (ID >= 10000)
+            // Clean up any old non-bypass rules
             const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
             const oldInterceptRules = existingRules.filter(rule => rule.id < 10000);
             
             if (oldInterceptRules.length > 0) {
-                console.log('Removing old dynamic intercept rules...');
-                const ruleIds = oldInterceptRules.map(rule => rule.id);
+                const rulesToRemove = oldInterceptRules.map(rule => rule.id);
                 await chrome.declarativeNetRequest.updateDynamicRules({
-                    removeRuleIds: ruleIds
+                    removeRuleIds: rulesToRemove
                 });
+                console.log('Removed old dynamic intercept rules');
             }
-
+            
             // Log current bypass rules
             const bypassRules = existingRules.filter(rule => rule.id >= 10000);
             console.log(`Active bypass rules: ${bypassRules.length}`);
             
-            // With static rules, we don't need to create dynamic intercept rules anymore
-            console.log('HTTP interception using static rules from rules.json');
-            console.log('Static rules persist across browser sessions automatically');
+            console.log('HTTP interception using webNavigation API');
             
         } catch (error) {
-            console.error('Error verifying interception rules:', error);
+            console.error('Error setting up interception rules:', error);
         }
     }
 
@@ -95,6 +156,7 @@ class HTTPSShieldBackground {
                     await this.allowHttpDomainOnce(message.url, effectiveTabId);
                     sendResponse({ success: true });
                     break;
+
 
                 case 'closeTab':
                     if (message.tabId) {
@@ -138,17 +200,19 @@ class HTTPSShieldBackground {
             
             console.log(`Creating bypass rule with pattern: ${regexPattern}`);
             
-            // Add bypass rule with highest priority (higher than static rules)
+            // Create bypass rule with high priority
+            const bypassRule = {
+                id: ruleId,
+                priority: 2147483647, // Maximum priority
+                action: { type: 'allow' },
+                condition: {
+                    regexFilter: regexPattern,
+                    resourceTypes: ['main_frame']
+                }
+            };
+            
             await chrome.declarativeNetRequest.updateDynamicRules({
-                addRules: [{
-                    id: ruleId,
-                    priority: 3000, // Higher than any static rule priority
-                    action: { type: 'allow' },
-                    condition: {
-                        regexFilter: regexPattern,
-                        resourceTypes: ['main_frame']
-                    }
-                }]
+                addRules: [bypassRule]
             });
             
             console.log(`Bypass rule ${ruleId} created successfully`);
@@ -180,7 +244,7 @@ class HTTPSShieldBackground {
                 } else {
                     console.log('No tab ID provided, letting page handle navigation');
                 }
-            }, 150); // 150ms delay to ensure rule is active
+            }, 100); // 100ms delay to ensure rule is active
             
         } catch (error) {
             console.error('Error allowing HTTP domain:', error);

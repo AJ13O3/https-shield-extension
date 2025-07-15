@@ -28,6 +28,41 @@ function throttle(func, limit) {
     };
 }
 
+// Fallback detection for Chrome's HTTPS-Only warning page
+function detectChromeHttpsOnlyWarning() {
+    // Check for Chrome's error page indicators
+    if (document.title && (
+        document.title.includes('This site can\'t provide a secure connection') ||
+        document.title.includes('Privacy error') ||
+        document.title.includes('ERR_SSL_PROTOCOL_ERROR')
+    )) {
+        console.log('Chrome HTTPS-Only warning page detected');
+        chrome.runtime.sendMessage({
+            action: 'httpsOnlyWarningDetected',
+            url: window.location.href
+        });
+        return true;
+    }
+    
+    // Check body text for error messages
+    const bodyText = document.body ? document.body.textContent : '';
+    if (bodyText && (
+        bodyText.includes('ERR_SSL_PROTOCOL_ERROR') ||
+        bodyText.includes('This site can\'t provide a secure connection') ||
+        bodyText.includes('sent an invalid response') ||
+        bodyText.includes('Try visiting the site\'s homepage over an unencrypted connection')
+    )) {
+        console.log('Chrome HTTPS-Only warning detected via body text');
+        chrome.runtime.sendMessage({
+            action: 'httpsOnlyWarningDetected',
+            url: window.location.href
+        });
+        return true;
+    }
+    
+    return false;
+}
+
 // Configuration
 const DETECTION_CONFIG = {
     performance: {
