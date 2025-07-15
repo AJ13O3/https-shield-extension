@@ -1,7 +1,24 @@
 // Get URL parameters
 const urlParams = new URLSearchParams(window.location.search);
-const targetUrl = urlParams.get('target');
+let targetUrl = urlParams.get('target');
 const tabId = urlParams.get('tabId');
+const intercepted = urlParams.get('intercepted');
+
+// Handle intercepted URLs from declarativeNetRequest
+if (intercepted === 'true' && targetUrl) {
+    // The URL might be encoded from the regex substitution
+    try {
+        // If it's a full URL, use it directly
+        if (targetUrl.startsWith('http://')) {
+            targetUrl = targetUrl;
+        } else {
+            // Otherwise, try to decode it
+            targetUrl = decodeURIComponent(targetUrl);
+        }
+    } catch (e) {
+        console.error('Error decoding URL:', e);
+    }
+}
 
 // Display the target URL
 document.getElementById('targetUrl').textContent = targetUrl || 'Unknown URL';
@@ -164,9 +181,26 @@ function toggleDetails() {
 function proceedToSite() {
     if (!targetUrl) return;
     
-    // Since we can't block Chrome's HTTPS-only warning in MV3,
-    // we'll just navigate to the URL and let the user handle Chrome's warning
-    window.location.href = targetUrl;
+    // If this was an intercepted request, we need to allow it temporarily
+    if (intercepted === 'true') {
+        chrome.runtime.sendMessage({
+            action: 'allowHttpOnce',
+            url: targetUrl,
+            tabId: tabId ? parseInt(tabId) : null
+        }, function(response) {
+            if (response && response.success) {
+                // The background script will handle navigation
+                window.close();
+            } else {
+                console.error('Failed to allow HTTP bypass');
+                // Fallback: try to navigate anyway
+                window.location.href = targetUrl;
+            }
+        });
+    } else {
+        // Not intercepted, just navigate
+        window.location.href = targetUrl;
+    }
 }
 
 function learnMore(e) {
