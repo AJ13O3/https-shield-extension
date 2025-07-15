@@ -38,5 +38,12 @@
       "icons/*"
     ],
     "matches": ["<all_urls>"]
-  }]
+  }],
+  "declarative_net_request": {
+    "rule_resources": [{
+      "id": "intercept_rules",
+      "enabled": true,
+      "path": "rules.json"
+    }]
+  }
 }

@@ -47,78 +47,32 @@ class HTTPSShieldBackground {
     }
 
     async setupInterceptionRules() {
-        console.log('Setting up HTTP interception rules...');
+        console.log('Verifying HTTP interception rules...');
         
         try {
-            // First, clear any existing intercept rules (keep bypass rules)
+            // Clear any old dynamic intercept rules (we use static rules now)
+            // But keep bypass rules (ID >= 10000)
             const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
-            const interceptRuleIds = existingRules
-                .filter(rule => rule.id < 1000) // Only remove intercept rules
-                .map(rule => rule.id);
-                
-            if (interceptRuleIds.length > 0) {
+            const oldInterceptRules = existingRules.filter(rule => rule.id < 10000);
+            
+            if (oldInterceptRules.length > 0) {
+                console.log('Removing old dynamic intercept rules...');
+                const ruleIds = oldInterceptRules.map(rule => rule.id);
                 await chrome.declarativeNetRequest.updateDynamicRules({
-                    removeRuleIds: interceptRuleIds
+                    removeRuleIds: ruleIds
                 });
             }
 
-            // Local/private network patterns to exclude
-            const excludedPatterns = [
-                'localhost',
-                '127.0.0.1',
-                '\\[::1\\]',
-                '192\\.168\\.\\d+\\.\\d+',
-                '10\\.\\d+\\.\\d+\\.\\d+',
-                '172\\.(1[6-9]|2\\d|3[01])\\.\\d+\\.\\d+',
-                '.*\\.local',
-                '.*\\.localhost'
-            ];
-
-            const rules = [];
-
-            // Add exclusion rules for local addresses (higher priority)
-            excludedPatterns.forEach((pattern, index) => {
-                rules.push({
-                    id: 100 + index,
-                    priority: 2000, // Higher priority
-                    action: { type: 'allow' },
-                    condition: {
-                        regexFilter: `^http://${pattern}(/.*)?$`,
-                        resourceTypes: ['main_frame']
-                    }
-                });
-            });
-
-            // Add main interception rule with VERY high priority
-            rules.push({
-                id: 1,
-                priority: 1000, // Much higher priority than before
-                action: {
-                    type: 'redirect',
-                    redirect: {
-                        regexSubstitution: chrome.runtime.getURL('/src/pages/risk-assessment.html') + 
-                            '?target=\\0&intercepted=true'
-                    }
-                },
-                condition: {
-                    regexFilter: '^http://([^/]+)(/.*)?(\\?.*)?$',
-                    resourceTypes: ['main_frame']
-                }
-            });
-
-            // Apply all rules
-            await chrome.declarativeNetRequest.updateDynamicRules({
-                addRules: rules
-            });
-
-            console.log('HTTP interception rules set up successfully');
+            // Log current bypass rules
+            const bypassRules = existingRules.filter(rule => rule.id >= 10000);
+            console.log(`Active bypass rules: ${bypassRules.length}`);
             
-            // Verify rules were added
-            const newRules = await chrome.declarativeNetRequest.getDynamicRules();
-            console.log(`Active dynamic rules: ${newRules.length}`);
+            // With static rules, we don't need to create dynamic intercept rules anymore
+            console.log('HTTP interception using static rules from rules.json');
+            console.log('Static rules persist across browser sessions automatically');
             
         } catch (error) {
-            console.error('Error setting up interception rules:', error);
+            console.error('Error verifying interception rules:', error);
         }
     }
 
@@ -381,6 +335,11 @@ class HTTPSShieldBackground {
             await chrome.storage.sync.set({ settings: defaultSettings });
         }
 
+        // CRITICAL: Always ensure interception rules are active on initialization
+        // This handles cases where the extension was already installed but Chrome restarted
+        console.log('Initializing HTTPS Shield - checking interception rules...');
+        await this.setupInterceptionRules();
+        
         console.log('HTTPS Shield Background initialized with interception');
     }
 
