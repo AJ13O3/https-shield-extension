@@ -165,6 +165,20 @@ class HTTPSShieldBackground {
                     sendResponse({ success: true });
                     break;
 
+                case 'navigateTab':
+                    if (message.tabId && message.url) {
+                        try {
+                            await chrome.tabs.update(parseInt(message.tabId), { url: message.url });
+                            sendResponse({ success: true });
+                        } catch (error) {
+                            console.error('Tab navigation error:', error);
+                            sendResponse({ success: false, error: error.message });
+                        }
+                    } else {
+                        sendResponse({ success: false, error: 'Missing tabId or url' });
+                    }
+                    break;
+
                 case 'openRiskAssessment':
                     const assessmentUrl = chrome.runtime.getURL(
                         `/src/pages/risk-assessment.html?target=${encodeURIComponent(message.url)}&tabId=${sender.tab?.id}`

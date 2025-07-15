@@ -203,31 +203,50 @@ async function proceedToSite() {
             });
             
             if (response && response.success) {
-                // For intercepted requests, wait a bit longer then navigate
-                if (intercepted === 'true') {
-                    proceedBtn.textContent = 'Navigating to site...';
-                    setTimeout(() => {
-                        window.location.href = targetUrl;
-                    }, 200);
-                } else {
-                    // Non-intercepted, just navigate
-                    window.location.href = targetUrl;
-                }
+                console.log('Bypass rule created successfully:', response);
+                
+                // Update UI to show navigation is starting
+                proceedBtn.textContent = 'Navigating to site...';
+                
+                // Wait a bit for rule to be fully processed, then navigate
+                setTimeout(() => {
+                    try {
+                        // Use location.replace for better navigation in extension context
+                        window.location.replace(targetUrl);
+                    } catch (navError) {
+                        console.error('Navigation error:', navError);
+                        // Fallback: try using chrome.tabs.update if available
+                        if (tabId) {
+                            chrome.runtime.sendMessage({
+                                action: 'navigateTab',
+                                tabId: parseInt(tabId),
+                                url: targetUrl
+                            });
+                        } else {
+                            // Last resort: simple location assignment
+                            window.location.href = targetUrl;
+                        }
+                    }
+                }, 500); // Increased delay to ensure rule is fully active
+                
             } else {
-                throw new Error('Bypass request failed');
+                throw new Error(response?.error || 'Bypass request failed');
             }
         } catch (error) {
             console.error('Bypass attempt failed:', error);
             if (retries < maxRetries) {
                 retries++;
                 proceedBtn.textContent = `Retrying... (${retries}/${maxRetries})`;
-                setTimeout(attemptBypass, 500);
+                setTimeout(attemptBypass, 1000); // Increased retry delay
             } else {
                 // All retries failed, restore button
                 proceedBtn.disabled = false;
                 proceedBtn.innerHTML = originalText;
                 proceedBtn.style.opacity = '1';
-                alert('Unable to proceed to the site. Please try again.');
+                
+                // Show more helpful error message
+                const errorMsg = error.message || 'Unknown error occurred';
+                alert(`Unable to proceed to the site: ${errorMsg}\n\nPlease try again or contact support if the problem persists.`);
             }
         }
     };
