@@ -181,8 +181,18 @@ function toggleDetails() {
 function proceedToSite() {
     if (!targetUrl) return;
     
+    const proceedBtn = document.getElementById('proceedBtn');
+    const originalText = proceedBtn.textContent;
+    
+    // Show loading state
+    proceedBtn.disabled = true;
+    proceedBtn.textContent = 'Setting up secure bypass...';
+    proceedBtn.style.opacity = '0.7';
+    
     // If this was an intercepted request, we need to allow it temporarily
     if (intercepted === 'true') {
+        console.log('Requesting bypass for:', targetUrl);
+        
         chrome.runtime.sendMessage({
             action: 'allowHttpOnce',
             url: targetUrl,
@@ -190,16 +200,40 @@ function proceedToSite() {
         }, function(response) {
             if (response && response.success) {
                 // The background script will handle navigation
-                window.close();
+                // Show success briefly before navigation
+                proceedBtn.textContent = 'Redirecting...';
+                console.log('Bypass set successfully, navigation will happen automatically');
+                
+                // Add a visual indicator that navigation is happening
+                setTimeout(() => {
+                    // If we're still here after 2 seconds, something went wrong
+                    if (document.hasFocus()) {
+                        console.error('Navigation did not occur as expected');
+                        proceedBtn.disabled = false;
+                        proceedBtn.textContent = originalText;
+                        proceedBtn.style.opacity = '1';
+                        alert('There was an issue proceeding to the site. Please try again.');
+                    }
+                }, 2000);
             } else {
-                console.error('Failed to allow HTTP bypass');
+                console.error('Failed to allow HTTP bypass:', response?.error);
+                // Reset button
+                proceedBtn.disabled = false;
+                proceedBtn.textContent = originalText;
+                proceedBtn.style.opacity = '1';
+                
                 // Fallback: try to navigate anyway
-                window.location.href = targetUrl;
+                if (confirm('There was an issue with the secure bypass. Would you like to try navigating directly?')) {
+                    window.location.href = targetUrl;
+                }
             }
         });
     } else {
         // Not intercepted, just navigate
-        window.location.href = targetUrl;
+        proceedBtn.textContent = 'Redirecting...';
+        setTimeout(() => {
+            window.location.href = targetUrl;
+        }, 100);
     }
 }
 

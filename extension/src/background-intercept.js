@@ -16,6 +16,13 @@ class HTTPSShieldBackground {
             await this.setupInterceptionRules();
         });
 
+        // Browser startup - re-establish intercept rules
+        chrome.runtime.onStartup.addListener(async () => {
+            console.log('HTTPS Shield starting up...');
+            await this.setupInterceptionRules();
+            this.bypassedDomains.clear(); // Clear any stale bypass data
+        });
+
         // Message handling
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             this.handleMessage(message, sender, sendResponse);
@@ -27,18 +34,31 @@ class HTTPSShieldBackground {
             // Clean up any bypasses associated with this tab
             this.cleanupTabBypasses(tabId);
         });
+
+        // Periodically check if rules are still active
+        setInterval(async () => {
+            const rules = await chrome.declarativeNetRequest.getDynamicRules();
+            const hasInterceptRule = rules.some(rule => rule.id === 1);
+            if (!hasInterceptRule) {
+                console.log('Intercept rule missing, re-establishing...');
+                await this.setupInterceptionRules();
+            }
+        }, 60000); // Check every minute
     }
 
     async setupInterceptionRules() {
         console.log('Setting up HTTP interception rules...');
         
         try {
-            // First, clear any existing dynamic rules
+            // First, clear any existing intercept rules (keep bypass rules)
             const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
-            if (existingRules.length > 0) {
-                const ruleIds = existingRules.map(rule => rule.id);
+            const interceptRuleIds = existingRules
+                .filter(rule => rule.id < 1000) // Only remove intercept rules
+                .map(rule => rule.id);
+                
+            if (interceptRuleIds.length > 0) {
                 await chrome.declarativeNetRequest.updateDynamicRules({
-                    removeRuleIds: ruleIds
+                    removeRuleIds: interceptRuleIds
                 });
             }
 
@@ -60,7 +80,7 @@ class HTTPSShieldBackground {
             excludedPatterns.forEach((pattern, index) => {
                 rules.push({
                     id: 100 + index,
-                    priority: 2,
+                    priority: 2000, // Higher priority
                     action: { type: 'allow' },
                     condition: {
                         regexFilter: `^http://${pattern}(/.*)?$`,
@@ -69,10 +89,10 @@ class HTTPSShieldBackground {
                 });
             });
 
-            // Add main interception rule (lower priority)
+            // Add main interception rule with VERY high priority
             rules.push({
                 id: 1,
-                priority: 1,
+                priority: 1000, // Much higher priority than before
                 action: {
                     type: 'redirect',
                     redirect: {
@@ -95,7 +115,7 @@ class HTTPSShieldBackground {
             
             // Verify rules were added
             const newRules = await chrome.declarativeNetRequest.getDynamicRules();
-            console.log(`Active rules: ${newRules.length}`);
+            console.log(`Active dynamic rules: ${newRules.length}`);
             
         } catch (error) {
             console.error('Error setting up interception rules:', error);
@@ -116,7 +136,9 @@ class HTTPSShieldBackground {
                     break;
 
                 case 'allowHttpOnce':
-                    await this.allowHttpDomainOnce(message.url, message.tabId);
+                    // Use sender tab ID if available, otherwise use provided tabId
+                    const effectiveTabId = sender.tab?.id || message.tabId;
+                    await this.allowHttpDomainOnce(message.url, effectiveTabId);
                     sendResponse({ success: true });
                     break;
 
@@ -150,24 +172,32 @@ class HTTPSShieldBackground {
             const urlObj = new URL(url);
             const domain = urlObj.hostname;
             
-            console.log(`Temporarily allowing HTTP for ${domain}`);
+            console.log(`Temporarily allowing HTTP for ${domain} on tab ${tabId}`);
             
             // Generate unique rule ID
             const ruleId = 10000 + Date.now() % 90000;
             
-            // Add bypass rule with highest priority
+            // Create a regex pattern that matches the specific domain
+            // Escape special regex characters in the domain
+            const escapedDomain = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regexPattern = `^http://${escapedDomain}(/.*)?(\\\?.*)?$`;
+            
+            console.log(`Creating bypass rule with pattern: ${regexPattern}`);
+            
+            // Add bypass rule with highest priority (higher than static rules)
             await chrome.declarativeNetRequest.updateDynamicRules({
                 addRules: [{
                     id: ruleId,
-                    priority: 3,
+                    priority: 3000, // Higher than any static rule priority
                     action: { type: 'allow' },
                     condition: {
-                        urlFilter: `||${domain}^`,
-                        resourceTypes: ['main_frame'],
-                        domainType: 'firstParty'
+                        regexFilter: regexPattern,
+                        resourceTypes: ['main_frame']
                     }
                 }]
             });
+            
+            console.log(`Bypass rule ${ruleId} created successfully`);
             
             // Track the bypass
             this.bypassedDomains.set(domain, {
@@ -181,10 +211,22 @@ class HTTPSShieldBackground {
                 await this.removeBypass(domain);
             }, 30 * 60 * 1000);
             
-            // Navigate to the HTTP URL
-            if (tabId) {
-                chrome.tabs.update(tabId, { url: url });
-            }
+            // Add a small delay to ensure the rule is processed by Chrome
+            setTimeout(() => {
+                // Navigate to the HTTP URL
+                if (tabId) {
+                    console.log(`Navigating tab ${tabId} to ${url} after bypass rule is active`);
+                    chrome.tabs.update(tabId, { url: url }, (tab) => {
+                        if (chrome.runtime.lastError) {
+                            console.error('Navigation error:', chrome.runtime.lastError);
+                        } else {
+                            console.log('Navigation initiated successfully');
+                        }
+                    });
+                } else {
+                    console.log('No tab ID provided, letting page handle navigation');
+                }
+            }, 150); // 150ms delay to ensure rule is active
             
         } catch (error) {
             console.error('Error allowing HTTP domain:', error);
@@ -348,10 +390,8 @@ class HTTPSShieldBackground {
             chrome.tabs.create({
                 url: chrome.runtime.getURL('/src/pages/welcome.html')
             });
-        } else if (details.reason === 'update') {
-            // Re-setup rules on update
-            await this.setupInterceptionRules();
         }
+        // Note: setupInterceptionRules is called after this in the onInstalled listener
     }
 
     async getSettings() {
