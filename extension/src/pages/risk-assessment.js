@@ -4,6 +4,9 @@ let targetUrl = urlParams.get('target');
 const tabId = urlParams.get('tabId');
 const intercepted = urlParams.get('intercepted');
 
+// Initialize API client (will be loaded dynamically)
+let apiClient = null;
+
 // Handle intercepted URLs from declarativeNetRequest
 if (intercepted === 'true' && targetUrl) {
     // The URL might be encoded from the regex substitution
@@ -24,9 +27,22 @@ if (intercepted === 'true' && targetUrl) {
 document.getElementById('targetUrl').textContent = targetUrl || 'Unknown URL';
 
 // Initialize page
-document.addEventListener('DOMContentLoaded', function() {
-    // Start risk analysis
-    analyzeRisk();
+document.addEventListener('DOMContentLoaded', async function() {
+    // Load API client dynamically
+    try {
+        const apiClientModule = await import(chrome.runtime.getURL('src/services/api-client.js'));
+        const HTTPSShieldAPIClient = apiClientModule.default || apiClientModule.HTTPSShieldAPIClient;
+        apiClient = new HTTPSShieldAPIClient();
+        
+        // Wait for API client to initialize
+        await apiClient.initialize();
+        
+        // Start risk analysis
+        analyzeRisk();
+    } catch (error) {
+        console.error('Failed to load API client:', error);
+        displayAPIError('Failed to initialize security analysis system');
+    }
     
     // Set up button handlers
     document.getElementById('goBackBtn').addEventListener('click', goBack);
@@ -37,45 +53,49 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function analyzeRisk() {
     try {
-        // Send message to background script to analyze the URL
-        const response = await chrome.runtime.sendMessage({
-            action: 'analyzeRisk',
-            url: targetUrl
-        });
+        console.log('Starting risk analysis for:', targetUrl);
         
-        if (response && response.success) {
-            displayRiskResults(response.data);
+        if (apiClient) {
+            // Use API client to analyze the URL
+            const riskData = await apiClient.analyzeUrlRisk(targetUrl);
+            
+            if (riskData) {
+                displayRiskResults(riskData);
+            } else {
+                displayAPIError('Security analysis returned no data');
+            }
         } else {
-            displayRiskError();
+            displayAPIError('Security analysis system not available');
         }
     } catch (error) {
         console.error('Risk analysis error:', error);
-        displayRiskError();
+        
+        // Determine specific error message based on error type
+        let errorMessage = 'Security analysis failed';
+        if (error.message.includes('timeout')) {
+            errorMessage = 'Security analysis timed out - please try again';
+        } else if (error.message.includes('403')) {
+            errorMessage = 'Security analysis authentication failed';
+        } else if (error.message.includes('500')) {
+            errorMessage = 'Security analysis service is temporarily unavailable';
+        } else if (error.message.includes('network')) {
+            errorMessage = 'Network error during security analysis';
+        }
+        
+        displayAPIError(errorMessage);
     }
 }
+
 
 function displayRiskResults(riskData) {
     // Hide loading, show results
     document.getElementById('riskLoading').style.display = 'none';
     document.getElementById('riskResults').style.display = 'block';
     
-    // Determine risk level
-    const riskScore = riskData.riskScore || 75; // Default high risk for HTTP
-    let riskLevel, riskClass;
-    
-    if (riskScore >= 80) {
-        riskLevel = 'CRITICAL';
-        riskClass = 'critical';
-    } else if (riskScore >= 60) {
-        riskLevel = 'HIGH';
-        riskClass = 'high';
-    } else if (riskScore >= 40) {
-        riskLevel = 'MEDIUM';
-        riskClass = 'medium';
-    } else {
-        riskLevel = 'LOW';
-        riskClass = 'low';
-    }
+    // Get risk data from API response
+    const riskScore = riskData.riskScore || 75;
+    const riskLevel = riskData.riskLevel || 'HIGH';
+    const riskClass = riskLevel.toLowerCase();
     
     // Update risk display
     const riskValue = document.getElementById('riskValue');
@@ -87,31 +107,154 @@ function displayRiskResults(riskData) {
     riskFill.style.width = `${riskScore}%`;
     riskFill.className = `risk-fill ${riskClass}`;
     
-    // Display risk details
-    const riskDetails = riskData.details || [
+    // Display recommendations instead of generic details
+    const recommendations = riskData.recommendations || [
         'No encryption for data transmission',
         'Potential for man-in-the-middle attacks',
         'Cannot verify site authenticity'
     ];
     
     const detailsHtml = '<ul>' + 
-        riskDetails.map(detail => `<li>${detail}</li>`).join('') +
+        recommendations.map(rec => `<li>${rec}</li>`).join('') +
         '</ul>';
     document.getElementById('riskDetails').innerHTML = detailsHtml;
     
-    // Store detailed info for advanced view
-    if (riskData.advancedDetails) {
-        document.getElementById('detailedRiskInfo').innerHTML = formatAdvancedDetails(riskData.advancedDetails);
+    // Store detailed analysis info for advanced view
+    if (riskData.analysis) {
+        document.getElementById('detailedRiskInfo').innerHTML = formatAdvancedAnalysis(riskData.analysis);
     }
+    
+    // Add data source indicator
+    const sourceIndicator = riskData.source === 'mock' ? ' (Offline Mode)' : '';
+    document.getElementById('riskValue').title = `Risk Level: ${riskLevel}${sourceIndicator}`;
+}
+
+function formatAdvancedAnalysis(analysis) {
+    if (!analysis) return '<p>No detailed analysis available.</p>';
+    
+    let html = '<div class="advanced-analysis">';
+    
+    // Protocol Analysis
+    if (analysis.protocol_analysis) {
+        html += '<div class="analysis-section">';
+        html += '<h4>Protocol Analysis</h4>';
+        html += `<p><strong>Protocol:</strong> ${analysis.protocol_analysis.protocol?.toUpperCase() || 'Unknown'}</p>`;
+        html += `<p><strong>Secure:</strong> ${analysis.protocol_analysis.secure ? 'Yes' : 'No'}</p>`;
+        if (analysis.protocol_analysis.risk_factors?.length > 0) {
+            html += '<ul>';
+            analysis.protocol_analysis.risk_factors.forEach(factor => {
+                html += `<li>${factor}</li>`;
+            });
+            html += '</ul>';
+        }
+        html += '</div>';
+    }
+    
+    // Domain Analysis
+    if (analysis.domain_analysis) {
+        html += '<div class="analysis-section">';
+        html += '<h4>Domain Analysis</h4>';
+        html += `<p><strong>Domain:</strong> ${analysis.domain_analysis.domain || 'Unknown'}</p>`;
+        html += `<p><strong>Length:</strong> ${analysis.domain_analysis.length || 'Unknown'} characters</p>`;
+        if (analysis.domain_analysis.subdomain_count !== undefined) {
+            html += `<p><strong>Subdomains:</strong> ${analysis.domain_analysis.subdomain_count}</p>`;
+        }
+        if (analysis.domain_analysis.risk_indicators?.length > 0) {
+            html += '<p><strong>Risk Indicators:</strong></p><ul>';
+            analysis.domain_analysis.risk_indicators.forEach(indicator => {
+                html += `<li>${indicator}</li>`;
+            });
+            html += '</ul>';
+        }
+        html += '</div>';
+    }
+    
+    // Error Analysis
+    if (analysis.error_analysis && analysis.error_analysis.error_code) {
+        html += '<div class="analysis-section">';
+        html += '<h4>Error Analysis</h4>';
+        html += `<p><strong>Error Code:</strong> ${analysis.error_analysis.error_code}</p>`;
+        html += `<p><strong>Severity:</strong> ${analysis.error_analysis.severity}</p>`;
+        if (analysis.error_analysis.description) {
+            html += `<p><strong>Description:</strong> ${analysis.error_analysis.description}</p>`;
+        }
+        if (analysis.error_analysis.risk_factors?.length > 0) {
+            html += '<p><strong>Risk Factors:</strong></p><ul>';
+            analysis.error_analysis.risk_factors.forEach(factor => {
+                html += `<li>${factor}</li>`;
+            });
+            html += '</ul>';
+        }
+        html += '</div>';
+    }
+    
+    // URL Structure Analysis
+    if (analysis.url_structure) {
+        html += '<div class="analysis-section">';
+        html += '<h4>URL Structure Analysis</h4>';
+        html += `<p><strong>URL Length:</strong> ${analysis.url_structure.length || 'Unknown'} characters</p>`;
+        if (analysis.url_structure.risk_indicators?.length > 0) {
+            html += '<p><strong>Risk Indicators:</strong></p><ul>';
+            analysis.url_structure.risk_indicators.forEach(indicator => {
+                html += `<li>${indicator}</li>`;
+            });
+            html += '</ul>';
+        }
+        html += '</div>';
+    }
+    
+    html += '</div>';
+    return html;
 }
 
 function displayRiskError() {
-    document.getElementById('riskLoading').innerHTML = `
-        <div class="error-message">
-            <p>Unable to complete risk analysis</p>
-            <p class="error-detail">Proceeding without risk assessment</p>
+    displayAPIError('Unable to complete security analysis');
+}
+
+function displayAPIError(message) {
+    // Hide loading, show error
+    document.getElementById('riskLoading').style.display = 'none';
+    document.getElementById('riskResults').style.display = 'none';
+    
+    // Create error display
+    const errorHtml = `
+        <div class="api-error-container">
+            <div class="error-icon">⚠️</div>
+            <div class="error-content">
+                <h3>Security Analysis Unavailable</h3>
+                <p class="error-message">${message}</p>
+                <p class="error-explanation">
+                    HTTPS Shield requires AI-powered security analysis to protect you from potential threats. 
+                    Without this analysis, we cannot safely assess the security risks of this HTTP site.
+                </p>
+                <div class="error-actions">
+                    <button id="retryAnalysis" class="retry-btn">Retry Analysis</button>
+                    <button id="proceedWithoutAnalysis" class="proceed-unsafe-btn">Proceed Without Analysis (Not Recommended)</button>
+                </div>
+            </div>
         </div>
     `;
+    
+    // Replace the risk loading section with error display
+    document.getElementById('riskLoading').innerHTML = errorHtml;
+    document.getElementById('riskLoading').style.display = 'block';
+    
+    // Add event listeners for error action buttons
+    document.getElementById('retryAnalysis').addEventListener('click', () => {
+        // Reset to loading state and retry
+        document.getElementById('riskLoading').innerHTML = `
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Analyzing security risks...</div>
+        `;
+        analyzeRisk();
+    });
+    
+    document.getElementById('proceedWithoutAnalysis').addEventListener('click', () => {
+        // Show warning and proceed
+        if (confirm('Are you sure you want to proceed without security analysis?\\n\\nThis HTTP site may pose security risks that have not been assessed.')) {
+            proceedToSite();
+        }
+    });
 }
 
 function formatAdvancedDetails(details) {

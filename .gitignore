@@ -67,6 +67,7 @@ logs/
 
 # Chrome extension builds
 extension/dist/
+extension/_metadata/
 build/
 dist/
 *.crx

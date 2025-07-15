@@ -10,11 +10,10 @@
 
 class HTTPSShieldAPIClient {
     constructor() {
-        this.apiBaseUrl = 'https://api.https-shield.com'; // Will be configured after AWS setup
-        this.apiKey = null;
+        this.apiBaseUrl = 'https://7razok9dpj.execute-api.eu-west-2.amazonaws.com/prod';
+        this.apiKey = null; // Will be set from storage or embedded in production
         this.timeout = 5000; // 5 second timeout
         this.retryAttempts = 2;
-        this.fallbackEnabled = true;
         
         this.initialize();
     }
@@ -40,6 +39,12 @@ class HTTPSShieldAPIClient {
      * @returns {Promise<Object>} Risk assessment result
      */
     async analyzeUrlRisk(url, errorCode = '', userAgent = '') {
+        // Ensure API key is loaded before making request
+        if (!this.apiKey) {
+            console.log('API key not loaded, reinitializing...');
+            await this.initialize();
+        }
+
         const requestData = {
             url: url,
             errorCode: errorCode,
@@ -49,6 +54,7 @@ class HTTPSShieldAPIClient {
 
         try {
             console.log('Analyzing URL risk via API:', url);
+            console.log('API key available:', !!this.apiKey);
             
             const result = await this.makeRequest('/analyze-url', 'POST', requestData);
             
@@ -63,11 +69,7 @@ class HTTPSShieldAPIClient {
         } catch (error) {
             console.error('API risk analysis failed:', error);
             
-            if (this.fallbackEnabled) {
-                console.log('Falling back to mock risk analysis');
-                return this.getMockRiskAssessment(url, errorCode);
-            }
-            
+            // No fallback - AI functionality is crucial
             throw error;
         }
     }
@@ -182,123 +184,6 @@ class HTTPSShieldAPIClient {
         );
     }
 
-    /**
-     * Generate mock risk assessment for fallback
-     * @private
-     * @param {string} url - URL to analyze
-     * @param {string} errorCode - Browser error code
-     * @returns {Object} Mock risk assessment
-     */
-    getMockRiskAssessment(url, errorCode) {
-        const parsedUrl = new URL(url);
-        
-        // Calculate mock risk score
-        let riskScore = 0;
-        
-        // Protocol analysis (40% weight)
-        if (parsedUrl.protocol === 'http:') {
-            riskScore += 40;
-        }
-        
-        // Error code analysis (30% weight)
-        const errorScores = {
-            'ERR_CERT_DATE_INVALID': 30,
-            'ERR_CERT_AUTHORITY_INVALID': 30,
-            'ERR_CERT_COMMON_NAME_INVALID': 30,
-            'ERR_SSL_PROTOCOL_ERROR': 20,
-            'ERR_INSECURE_RESPONSE': 20
-        };
-        riskScore += errorScores[errorCode] || 0;
-        
-        // Domain analysis (20% weight)
-        const suspiciousTlds = ['tk', 'ml', 'ga', 'cf'];
-        if (suspiciousTlds.some(tld => parsedUrl.hostname.endsWith(`.${tld}`))) {
-            riskScore += 20;
-        }
-        
-        // URL length analysis (10% weight)
-        if (url.length > 100) {
-            riskScore += 10;
-        }
-        
-        // Random variation
-        riskScore += Math.random() * 10;
-        riskScore = Math.min(Math.floor(riskScore), 100);
-        
-        const riskLevel = this.getRiskLevel(riskScore);
-        
-        return {
-            url: url,
-            riskScore: riskScore,
-            riskLevel: riskLevel,
-            analysis: {
-                protocol_analysis: {
-                    protocol: parsedUrl.protocol.replace(':', ''),
-                    secure: parsedUrl.protocol === 'https:'
-                },
-                error_analysis: {
-                    error_code: errorCode,
-                    severity: errorCode ? 'HIGH' : 'LOW'
-                },
-                domain_analysis: {
-                    domain: parsedUrl.hostname,
-                    length: parsedUrl.hostname.length
-                },
-                url_structure: {
-                    length: url.length
-                }
-            },
-            recommendations: this.getMockRecommendations(riskLevel),
-            timestamp: new Date().toISOString(),
-            source: 'mock'
-        };
-    }
-
-    /**
-     * Get risk level from score
-     * @private
-     * @param {number} score - Risk score
-     * @returns {string} Risk level
-     */
-    getRiskLevel(score) {
-        if (score >= 80) return 'CRITICAL';
-        if (score >= 60) return 'HIGH';
-        if (score >= 40) return 'MEDIUM';
-        return 'LOW';
-    }
-
-    /**
-     * Get mock recommendations
-     * @private
-     * @param {string} riskLevel - Risk level
-     * @returns {Array<string>} Recommendations
-     */
-    getMockRecommendations(riskLevel) {
-        const recommendations = {
-            'CRITICAL': [
-                'Do not proceed to this site',
-                'This site poses significant security risks',
-                'Consider reporting this site if it appears fraudulent'
-            ],
-            'HIGH': [
-                'Exercise extreme caution',
-                'Do not enter sensitive information',
-                'Consider finding an alternative secure site'
-            ],
-            'MEDIUM': [
-                'Proceed with caution',
-                'Verify the site is legitimate',
-                'Avoid entering sensitive data'
-            ],
-            'LOW': [
-                'Site appears relatively safe',
-                'Still verify the URL is correct',
-                'Look for HTTPS when possible'
-            ]
-        };
-        
-        return recommendations[riskLevel] || recommendations['MEDIUM'];
-    }
 
     /**
      * Update API configuration
@@ -321,13 +206,6 @@ class HTTPSShieldAPIClient {
         }
     }
 
-    /**
-     * Enable or disable fallback mode
-     * @param {boolean} enabled - Whether fallback is enabled
-     */
-    setFallbackEnabled(enabled) {
-        this.fallbackEnabled = enabled;
-    }
 
     /**
      * Delay utility for retry logic
@@ -344,3 +222,6 @@ class HTTPSShieldAPIClient {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = HTTPSShieldAPIClient;
 }
+
+// Export for ES6 modules
+export default HTTPSShieldAPIClient;

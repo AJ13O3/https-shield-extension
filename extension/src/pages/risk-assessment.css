@@ -36,6 +36,75 @@ body {
     }
 }
 
+/* API Error Styling */
+.api-error-container {
+    text-align: center;
+    padding: 30px;
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 8px;
+    margin: 20px 0;
+}
+
+.error-icon {
+    font-size: 48px;
+    margin-bottom: 15px;
+}
+
+.error-content h3 {
+    color: #b7791f;
+    margin-bottom: 10px;
+    font-size: 18px;
+}
+
+.error-message {
+    color: #856404;
+    font-weight: 500;
+    margin-bottom: 15px;
+}
+
+.error-explanation {
+    color: #6c5700;
+    font-size: 14px;
+    margin-bottom: 25px;
+    line-height: 1.5;
+}
+
+.error-actions {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.retry-btn, .proceed-unsafe-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.retry-btn {
+    background: #007bff;
+    color: white;
+}
+
+.retry-btn:hover {
+    background: #0056b3;
+}
+
+.proceed-unsafe-btn {
+    background: #dc3545;
+    color: white;
+}
+
+.proceed-unsafe-btn:hover {
+    background: #c82333;
+}
+
 .header {
     text-align: center;
     margin-bottom: 30px;

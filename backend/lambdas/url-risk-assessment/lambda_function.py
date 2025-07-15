@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from typing import Dict, Any, Optional, List
 import boto3
 from botocore.exceptions import ClientError
+from decimal import Decimal
 
 # Import logger configuration
 from logger_config import setup_logger, log_lambda_event, log_performance_metric, log_error, log_api_request
@@ -27,7 +28,7 @@ logger = setup_logger(__name__)
 
 # Initialize AWS clients
 dynamodb = boto3.resource('dynamodb')
-table_name = os.environ.get('DYNAMODB_TABLE_NAME')
+table_name = os.environ.get('DYNAMODB_TABLE_NAME', 'https-shield-risk-assessments')
 
 # Cache for DynamoDB table reference
 _dynamodb_table = None
@@ -38,6 +39,17 @@ def get_dynamodb_table():
     if _dynamodb_table is None:
         _dynamodb_table = dynamodb.Table(table_name)
     return _dynamodb_table
+
+class DecimalEncoder(json.JSONEncoder):
+    """Custom JSON encoder for DynamoDB Decimal objects"""
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            # Convert Decimal to int if it's a whole number, otherwise float
+            if obj % 1 == 0:
+                return int(obj)
+            else:
+                return float(obj)
+        return super(DecimalEncoder, self).default(obj)
 
 def lambda_handler(event, context):
     """
@@ -443,7 +455,7 @@ def success_response(data: Dict[str, Any]) -> Dict[str, Any]:
             'Access-Control-Allow-Headers': 'Content-Type,X-Api-Key,Authorization',
             'Access-Control-Allow-Methods': 'POST,OPTIONS'
         },
-        'body': json.dumps(data)
+        'body': json.dumps(data, cls=DecimalEncoder)
     }
 
 def error_response(status_code: int, message: str) -> Dict[str, Any]:
@@ -459,5 +471,5 @@ def error_response(status_code: int, message: str) -> Dict[str, Any]:
         'body': json.dumps({
             'error': message,
             'timestamp': datetime.utcnow().isoformat() + 'Z'
-        })
+        }, cls=DecimalEncoder)
     }
