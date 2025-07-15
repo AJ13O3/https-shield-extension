@@ -1,5 +1,0 @@
-# AWS Lambda doesn't require boto3 as it's pre-installed
-# Add any additional dependencies here as needed
-
-# For local testing only
-pytest==7.4.3
