@@ -13,7 +13,6 @@ import os
 import re
 import hashlib
 import time
-import asyncio
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional, List
@@ -25,8 +24,8 @@ from decimal import Decimal
 from logger_config import setup_logger, log_lambda_event, log_performance_metric, log_error, log_api_request
 
 # Import ML and external API services
-from ml_inference import ml_inference_service
-from external_apis import external_api_service
+from ml_inference import get_combined_ml_prediction
+from external_apis import get_combined_intelligence, is_test_url
 
 # Configure logging
 logger = setup_logger(__name__)
@@ -57,10 +56,6 @@ class DecimalEncoder(json.JSONEncoder):
         return super(DecimalEncoder, self).default(obj)
 
 def lambda_handler(event, context):
-    """Main Lambda handler - wraps async function"""
-    return asyncio.run(async_lambda_handler(event, context))
-
-async def async_lambda_handler(event, context):
     """
     Main Lambda handler for HTTPS risk assessment
     
@@ -122,17 +117,25 @@ async def async_lambda_handler(event, context):
         
         if cached_result:
             logger.info(f"Cache hit for URL: {url}")
+            # For test URLs, log that we're using cached data
+            if is_test_url(url):
+                logger.info(f"Using cached result for test URL: {url}")
             log_performance_metric(logger, 'total_request', (time.time() - start_time) * 1000, cache_hit=True)
             return success_response(cached_result)
         
+        # Log cache miss
+        logger.info(f"Cache miss for URL: {url}")
+        if is_test_url(url):
+            logger.info(f"No cache found for test URL: {url}, will perform fresh analysis")
+        
         # Perform risk assessment
         assessment_start = time.time()
-        assessment = await perform_risk_assessment(url, error_code, user_agent)
+        assessment = perform_risk_assessment(url, error_code, user_agent)
         log_performance_metric(logger, 'risk_assessment', (time.time() - assessment_start) * 1000)
         
-        # Cache the result
+        # Cache the result with appropriate TTL
         cache_write_start = time.time()
-        cache_assessment(cache_key, assessment)
+        cache_assessment(cache_key, assessment, url)
         log_performance_metric(logger, 'cache_write', (time.time() - cache_write_start) * 1000)
         
         # Log final metrics
@@ -149,14 +152,8 @@ async def async_lambda_handler(event, context):
     except Exception as e:
         log_error(logger, e, {'event': event, 'url': url if 'url' in locals() else 'unknown'})
         return error_response(500, 'Internal server error')
-    finally:
-        # Clean up external API service
-        try:
-            await external_api_service.close()
-        except Exception:
-            pass
 
-async def perform_risk_assessment(url: str, error_code: str, user_agent: str) -> Dict[str, Any]:
+def perform_risk_assessment(url: str, error_code: str, user_agent: str) -> Dict[str, Any]:
     """
     Perform comprehensive risk assessment for a URL using ML models and external APIs
     
@@ -186,8 +183,15 @@ async def perform_risk_assessment(url: str, error_code: str, user_agent: str) ->
     
     # Get external intelligence data
     try:
-        external_data = await external_api_service.get_combined_intelligence(url)
-        assessment['external_intelligence'] = external_data
+        logger.info(f"Getting external intelligence for URL: {url}")
+        external_data = get_combined_intelligence(url)
+        if external_data:
+            assessment['external_intelligence'] = external_data
+            logger.info(f"External intelligence result: {external_data}")
+        else:
+            external_data = {'combined_risk_score': 0.0, 'domain_age': 0, 'reputation_score': 0.5}
+            assessment['external_intelligence'] = {'error': 'No external intelligence available'}
+            logger.warning("No external intelligence data received")
     except Exception as e:
         log_error(logger, e, {'operation': 'external_intelligence', 'url': url})
         external_data = {'combined_risk_score': 0.0, 'domain_age': 0, 'reputation_score': 0.5}
@@ -195,17 +199,23 @@ async def perform_risk_assessment(url: str, error_code: str, user_agent: str) ->
     
     # Get ML model predictions
     try:
-        ml_prediction = await ml_inference_service.get_combined_ml_prediction(
+        logger.info(f"Getting ML predictions for URL: {url}")
+        ml_prediction = get_combined_ml_prediction(
             url, 
             assessment['analysis']['domain_analysis'],
             assessment['analysis']['error_analysis'],
             external_data
         )
         assessment['ml_prediction'] = ml_prediction
+        logger.info(f"ML prediction result: {ml_prediction}")
     except Exception as e:
         log_error(logger, e, {'operation': 'ml_prediction', 'url': url})
-        ml_prediction = {'ml_risk_score': 0.0, 'ml_confidence': 0.0}
-        assessment['ml_prediction'] = {'error': 'ML prediction failed'}
+        ml_prediction = {
+            'ml_risk_score': 0.0, 
+            'ml_confidence': 0.0,
+            'error': 'ML prediction failed (SageMaker endpoints not deployed)'
+        }
+        assessment['ml_prediction'] = ml_prediction
     
     # Calculate enhanced risk score
     enhanced_risk_score = calculate_enhanced_risk_score(
@@ -222,6 +232,13 @@ async def perform_risk_assessment(url: str, error_code: str, user_agent: str) ->
         external_data,
         ml_prediction
     )
+    
+    # Log detailed scoring breakdown for debugging
+    logger.info(f"Risk score breakdown - Domain: {assessment['analysis']['domain_analysis']}, "
+               f"Error: {assessment['analysis']['error_analysis']['severity']}, "
+               f"External: {external_data.get('combined_risk_score', 0)}, "
+               f"ML: {ml_prediction.get('ml_risk_score', 0)}, "
+               f"Final: {enhanced_risk_score}")
     
     return assessment
 
@@ -390,39 +407,63 @@ def calculate_enhanced_risk_score(analysis: Dict[str, Any],
                                 ml_prediction: Dict[str, Any]) -> int:
     """Calculate enhanced risk score using ML models and external intelligence"""
     
-    # Get basic analysis score (30% weight)
+    # Get basic analysis score
     basic_score = calculate_risk_score(analysis)
     
-    # Get ML prediction score (40% weight)
+    # Get ML prediction score
     ml_score = ml_prediction.get('ml_risk_score', 0.0)
     ml_confidence = ml_prediction.get('ml_confidence', 0.0)
+    ml_available = ml_confidence > 0.0  # Check if ML models are actually available
     
-    # Get external intelligence score (30% weight)
+    # Get external intelligence score
     external_score = external_data.get('combined_risk_score', 0.0)
     
+    # Dynamic weight allocation based on available data
+    if ml_available:
+        # All sources available - use original weighting
+        weights = {
+            'basic': 0.3,
+            'ml': 0.4,
+            'external': 0.3
+        }
+        
+        # Adjust ML weight based on confidence
+        if ml_confidence < 0.5:
+            weights['ml'] = 0.2
+            weights['basic'] = 0.5
+        elif ml_confidence > 0.8:
+            weights['ml'] = 0.5
+            weights['basic'] = 0.2
+    else:
+        # ML not available - redistribute weights between basic and external
+        weights = {
+            'basic': 0.4,
+            'ml': 0.0,
+            'external': 0.6  # Give more weight to external intelligence
+        }
+    
     # Calculate weighted score
-    weights = {
-        'basic': 0.3,
-        'ml': 0.4,
-        'external': 0.3
-    }
-    
-    # Adjust ML weight based on confidence
-    if ml_confidence < 0.5:
-        # Lower confidence - reduce ML weight, increase basic weight
-        weights['ml'] = 0.2
-        weights['basic'] = 0.5
-    elif ml_confidence > 0.8:
-        # High confidence - increase ML weight
-        weights['ml'] = 0.5
-        weights['basic'] = 0.2
-    
-    # Calculate final score
     final_score = (
         basic_score * weights['basic'] +
         ml_score * weights['ml'] +
         external_score * weights['external']
     )
+    
+    # Apply threat-based overrides (critical security feature)
+    threat_indicators = external_data.get('threat_indicators', [])
+    if threat_indicators:
+        # Check for critical threats
+        has_malware = any(
+            threat.get('type') == 'MALWARE' if isinstance(threat, dict) else 'malware' in str(threat).lower()
+            for threat in threat_indicators
+        )
+        
+        if has_malware:
+            # Malware detected - ensure minimum HIGH risk level
+            final_score = max(final_score, 75)
+        else:
+            # Other threats - ensure minimum MEDIUM risk level
+            final_score = max(final_score, 50)
     
     # Apply additional risk factors
     risk_multiplier = 1.0
@@ -433,11 +474,6 @@ def calculate_enhanced_risk_score(analysis: Dict[str, Any],
         risk_multiplier += 0.3
     elif domain_age < 90:
         risk_multiplier += 0.2
-    
-    # Known threats get maximum risk
-    threat_indicators = external_data.get('threat_indicators', [])
-    if threat_indicators:
-        risk_multiplier += 0.5
     
     # Apply multiplier and cap at 100
     final_score = min(final_score * risk_multiplier, 100)
@@ -514,40 +550,41 @@ def get_enhanced_recommendations(risk_level: str, analysis: Dict[str, Any],
         if 'xgboost' in models_used:
             recommendations.append('Machine learning model flagged suspicious URL patterns')
     
-    # Add external intelligence recommendations
-    threat_indicators = external_data.get('threat_indicators', [])
-    if threat_indicators:
-        recommendations.append('External security services have flagged this site')
-        for indicator in threat_indicators[:3]:  # Show max 3 indicators
-            recommendations.append(f'Security alert: {indicator}')
-    
-    # Domain age recommendations
-    domain_age = external_data.get('domain_age', 365)
-    if domain_age < 30:
-        recommendations.append('This domain was registered very recently (high risk)')
-    elif domain_age < 90:
-        recommendations.append('This domain is relatively new (moderate risk)')
-    
-    # Reputation-based recommendations
-    reputation_score = external_data.get('reputation_score', 0.5)
-    if reputation_score < 0.3:
-        recommendations.append('This site has poor reputation scores')
-    elif reputation_score > 0.8:
-        recommendations.append('This site has good reputation scores')
-    
-    # VirusTotal specific recommendations
-    if 'virustotal' in external_data:
-        vt_data = external_data['virustotal']
-        if not vt_data.get('is_safe', True):
-            detections = vt_data.get('detections', 0)
-            total = vt_data.get('total_scanners', 0)
-            recommendations.append(f'VirusTotal detected threats: {detections}/{total} scanners')
-    
-    # Google Safe Browsing recommendations
-    if 'google_safebrowsing' in external_data:
-        gsb_data = external_data['google_safebrowsing']
-        if not gsb_data.get('is_safe', True):
-            recommendations.append('Google Safe Browsing flagged this site as dangerous')
+    # Add external intelligence recommendations only if data exists
+    if external_data and not external_data.get('error'):
+        threat_indicators = external_data.get('threat_indicators', [])
+        if threat_indicators:
+            recommendations.append('External security services have flagged this site')
+            for indicator in threat_indicators[:3]:  # Show max 3 indicators
+                recommendations.append(f'Security alert: {indicator}')
+        
+        # Domain age recommendations
+        domain_age = external_data.get('domain_age', 365)
+        if domain_age < 30:
+            recommendations.append('This domain was registered very recently (high risk)')
+        elif domain_age < 90:
+            recommendations.append('This domain is relatively new (moderate risk)')
+        
+        # Reputation-based recommendations
+        reputation_score = external_data.get('reputation_score', 0.5)
+        if reputation_score < 0.3:
+            recommendations.append('This site has poor reputation scores')
+        elif reputation_score > 0.8:
+            recommendations.append('This site has good reputation scores')
+        
+        # VirusTotal specific recommendations
+        if 'virustotal' in external_data:
+            vt_data = external_data['virustotal']
+            if not vt_data.get('is_safe', True):
+                detections = vt_data.get('detections', 0)
+                total = vt_data.get('total_scanners', 0)
+                recommendations.append(f'VirusTotal detected threats: {detections}/{total} scanners')
+        
+        # Google Safe Browsing recommendations
+        if 'google_safebrowsing' in external_data:
+            gsb_data = external_data['google_safebrowsing']
+            if not gsb_data.get('is_safe', True):
+                recommendations.append('Google Safe Browsing flagged this site as dangerous')
     
     # Remove duplicates while preserving order
     seen = set()
@@ -560,8 +597,9 @@ def get_enhanced_recommendations(risk_level: str, analysis: Dict[str, Any],
     return unique_recommendations
 
 def generate_cache_key(url: str, error_code: str) -> str:
-    """Generate cache key for DynamoDB storage"""
-    combined = f"{url}|{error_code}"
+    """Generate cache key for DynamoDB storage with version control"""
+    version = "v4"  # Updated version to force cache refresh
+    combined = f"{version}|{url}|{error_code}"
     return hashlib.sha256(combined.encode()).hexdigest()
 
 def get_cached_assessment(cache_key: str) -> Optional[Dict[str, Any]]:
@@ -572,13 +610,9 @@ def get_cached_assessment(cache_key: str) -> Optional[Dict[str, Any]]:
         
         if 'Item' in response:
             item = response['Item']
-            # Check if cache is still valid (1 hour TTL)
-            cached_time = datetime.fromisoformat(item['timestamp'].replace('Z', '+00:00'))
-            if datetime.utcnow().replace(tzinfo=cached_time.tzinfo) - cached_time < timedelta(hours=1):
-                logger.info(f"Cache hit for key: {cache_key[:16]}...")
-                return item['assessment']
-            else:
-                logger.info(f"Cache expired for key: {cache_key[:16]}...")
+            # Check if cache is still valid (TTL is managed by DynamoDB)
+            logger.info(f"Cache hit for key: {cache_key[:16]}...")
+            return item['assessment']
         else:
             logger.info(f"Cache miss for key: {cache_key[:16]}...")
         
@@ -590,24 +624,54 @@ def get_cached_assessment(cache_key: str) -> Optional[Dict[str, Any]]:
         log_error(logger, e, {'operation': 'cache_get', 'cache_key': cache_key[:16]})
         return None
 
-def cache_assessment(cache_key: str, assessment: Dict[str, Any]) -> None:
-    """Cache assessment result in DynamoDB"""
+def convert_floats_to_decimal(obj):
+    """Recursively convert all float values to Decimal for DynamoDB compatibility"""
+    if isinstance(obj, dict):
+        return {k: convert_floats_to_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_floats_to_decimal(item) for item in obj]
+    elif isinstance(obj, float):
+        # Handle special float values
+        if obj != obj:  # NaN check
+            return Decimal('0')
+        elif obj == float('inf'):
+            return Decimal('999999')
+        elif obj == float('-inf'):
+            return Decimal('-999999')
+        else:
+            return Decimal(str(obj))
+    elif isinstance(obj, (int, bool)):
+        return obj  # Keep integers and booleans as-is
+    elif obj is None:
+        return obj  # Keep None as-is
+    else:
+        return obj
+
+def cache_assessment(cache_key: str, assessment: Dict[str, Any], url: str) -> None:
+    """Cache assessment result in DynamoDB with appropriate TTL"""
     try:
         table = get_dynamodb_table()
         
-        # Calculate TTL (expire after 24 hours)
-        ttl = int((datetime.utcnow() + timedelta(hours=24)).timestamp())
+        # Calculate TTL based on URL type
+        if is_test_url(url):
+            ttl = int((datetime.utcnow() + timedelta(minutes=5)).timestamp())  # 5 minutes for test URLs
+            logger.info(f"Using short TTL (5 minutes) for test URL: {url}")
+        else:
+            ttl = int((datetime.utcnow() + timedelta(hours=24)).timestamp())  # 24 hours for regular URLs
+        
+        # Convert all float values to Decimal for DynamoDB compatibility
+        assessment_for_cache = convert_floats_to_decimal(assessment)
         
         table.put_item(
             Item={
                 'assessment_id': cache_key,
-                'assessment': assessment,
+                'assessment': assessment_for_cache,
                 'timestamp': assessment['timestamp'],
                 'ttl': ttl
             }
         )
         
-        logger.info(f"Assessment cached for key: {cache_key[:16]}...")
+        logger.info(f"Assessment cached for key: {cache_key[:16]}... with TTL: {ttl}")
         
     except ClientError as e:
         log_error(logger, e, {'operation': 'cache_put', 'cache_key': cache_key[:16]})
