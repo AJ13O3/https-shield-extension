@@ -48,9 +48,9 @@ def get_urlbert_prediction(url: str) -> Dict[str, Any]:
     try:
         logger.info(f"Requesting URLBERT prediction for URL: {url[:50]}...")
         
-        # Prepare input for URLBERT
+        # Prepare input for URLBERT (compatible with new endpoint)
         input_data = {
-            "instances": [{"url": url}]
+            "inputs": url
         }
         
         # Make prediction request
@@ -58,7 +58,8 @@ def get_urlbert_prediction(url: str) -> Dict[str, Any]:
         response = sagemaker_runtime.invoke_endpoint(
             EndpointName=endpoints['urlbert'],
             ContentType='application/json',
-            Body=json.dumps(input_data)
+            Body=json.dumps(input_data),
+            Accept='application/json'
         )
         
         # Log performance
@@ -91,13 +92,23 @@ def _process_urlbert_response(response: Dict[str, Any]) -> Dict[str, Any]:
         
         prediction = predictions[0]
         
-        # URLBERT typically returns classification scores
+        # URLBERT returns risk_score as 0-1 probability (malicious probability)
+        # No need to multiply by 100 as we want to keep it as percentage
+        risk_score = float(prediction.get('risk_score', 0.5)) * 100
+        
+        # Extract probabilities if available
+        probabilities = prediction.get('probabilities', {})
+        
         return {
-            'risk_score': float(prediction.get('risk_score', 0.5)) * 100,
+            'risk_score': risk_score,
             'confidence': float(prediction.get('confidence', 0.5)),
             'model_version': 'urlbert-1.0',
-            'categories': prediction.get('categories', {}),
-            'features_used': prediction.get('features', [])
+            'classification': prediction.get('classification', 'unknown'),
+            'probabilities': {
+                'benign': probabilities.get('benign', 0.5),
+                'malicious': probabilities.get('malicious', 0.5)
+            },
+            'features_used': ['url_pattern_analysis', 'character_level_tokenization']
         }
         
     except Exception as e:

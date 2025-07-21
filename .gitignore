@@ -7,6 +7,8 @@ PRE-WARNING-INTERCEPTION.md
 TEST-PRE-WARNING.md
 TESTING-INTERCEPTION.md
 SAGEMAKER_SETUP.md
+urlbert-research.pdf
+URLBERT-master
 
 # Node.js
 node_modules/
@@ -26,6 +28,11 @@ yarn-error.log*
 .idea/
 *.swp
 *.swo
+*-workspace
+venv_clean
+venv
+docs
+
 
 # OS generated files
 .DS_Store
