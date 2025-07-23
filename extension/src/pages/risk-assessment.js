@@ -7,6 +7,12 @@ const intercepted = urlParams.get('intercepted');
 // Initialize API client (will be loaded dynamically)
 let apiClient = null;
 
+// Chat widget instance
+let chatWidget = null;
+
+// Store risk assessment data globally for chat widget
+window.riskAssessment = null;
+
 // Handle intercepted URLs from declarativeNetRequest
 if (intercepted === 'true' && targetUrl) {
     // The URL might be encoded from the regex substitution
@@ -49,6 +55,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('viewDetailsBtn').addEventListener('click', toggleDetails);
     document.getElementById('proceedBtn').addEventListener('click', proceedToSite);
     document.getElementById('learnMoreLink').addEventListener('click', learnMore);
+    
+    // Initialize chat widget after a short delay to ensure DOM is ready
+    setTimeout(initializeChatWidget, 1000);
 });
 
 async function analyzeRisk() {
@@ -127,6 +136,21 @@ function displayRiskResults(riskData) {
     // Add data source indicator
     const sourceIndicator = riskData.source === 'mock' ? ' (Offline Mode)' : '';
     document.getElementById('riskValue').title = `Risk Level: ${riskLevel}${sourceIndicator}`;
+    
+    // Store risk data globally for chat widget
+    window.riskAssessment = riskData;
+    
+    // Update chat widget if initialized
+    if (chatWidget) {
+        chatWidget.riskContext = {
+            url: targetUrl,
+            riskScore: riskScore,
+            riskLevel: riskLevel,
+            threats: riskData.threat_assessment || {},
+            analysis: riskData.analysis || {},
+            timestamp: new Date().toISOString()
+        };
+    }
 }
 
 function formatAdvancedAnalysis(analysis) {
@@ -403,4 +427,45 @@ function learnMore(e) {
     chrome.tabs.create({
         url: 'https://www.eff.org/https-everywhere/how-https-everywhere-works'
     });
+}
+
+/**
+ * Initialize the chat widget with current risk context
+ */
+function initializeChatWidget() {
+    try {
+        console.log('Initializing chat widget...');
+        
+        // Check if chat components are available
+        if (typeof ChatWidget === 'undefined' || typeof ChatService === 'undefined') {
+            console.warn('Chat components not loaded, retrying in 2 seconds...');
+            setTimeout(initializeChatWidget, 2000);
+            return;
+        }
+        
+        const container = document.getElementById('chatWidgetContainer');
+        if (!container) {
+            console.error('Chat widget container not found');
+            return;
+        }
+        
+        // Prepare risk context
+        const riskContext = {
+            url: targetUrl,
+            riskScore: window.riskAssessment?.riskScore || 50,
+            riskLevel: window.riskAssessment?.riskLevel || 'MEDIUM',
+            threats: window.riskAssessment?.threat_assessment || {},
+            analysis: window.riskAssessment?.analysis || {},
+            timestamp: new Date().toISOString(),
+            sessionId: `risk_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        };
+        
+        // Initialize chat widget
+        chatWidget = new ChatWidget(container, riskContext);
+        
+        console.log('Chat widget initialized successfully');
+        
+    } catch (error) {
+        console.error('Failed to initialize chat widget:', error);
+    }
 }
