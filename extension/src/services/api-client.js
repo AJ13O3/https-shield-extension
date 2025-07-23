@@ -11,7 +11,7 @@
 class HTTPSShieldAPIClient {
     constructor() {
         this.apiBaseUrl = 'https://7razok9dpj.execute-api.eu-west-2.amazonaws.com/prod';
-        this.apiKey = null; // Will be loaded from secure storage
+        this.apiKey = null; // loaded from secure Chrome storage
         this.timeout = 5000; // 5 second timeout
         this.retryAttempts = 2;
         
