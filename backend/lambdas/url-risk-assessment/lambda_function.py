@@ -10,7 +10,8 @@ import os
 import re
 import hashlib
 import time
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional, List
 import boto3
@@ -40,6 +41,16 @@ def get_dynamodb_table():
     if _dynamodb_table is None:
         _dynamodb_table = dynamodb.Table(table_name)
     return _dynamodb_table
+
+def generate_assessment_id(url: str) -> str:
+    """Generate unique assessment ID for this risk assessment"""
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+    url_hash = hashlib.sha256(url.encode()).hexdigest()[:8]
+    return f"RISK-{timestamp}-{url_hash}"
+
+def generate_session_id() -> str:
+    """Generate unique session ID for conversation continuity"""
+    return f"SESSION-{str(uuid.uuid4())}"
 
 class DecimalEncoder(json.JSONEncoder):
     """Custom JSON encoder for DynamoDB Decimal objects"""
@@ -159,17 +170,23 @@ def perform_risk_assessment(url: str, error_code: str, user_agent: str) -> Dict[
         user_agent: User agent string
         
     Returns:
-        Dictionary containing risk assessment results
+        Dictionary containing risk assessment results with assessment and session IDs
     """
     parsed_url = urlparse(url)
+    
+    # Generate unique identifiers for this assessment
+    assessment_id = generate_assessment_id(url)
+    session_id = generate_session_id()
     
     # Initialize assessment
     assessment = {
         'url': url,
         'domain': parsed_url.netloc,
         'protocol': parsed_url.scheme,
-        'timestamp': datetime.utcnow().isoformat() + 'Z',
-        'errorCode': error_code
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'errorCode': error_code,
+        'assessmentId': assessment_id,
+        'sessionId': session_id
     }
     
     # Get external intelligence data
@@ -293,20 +310,32 @@ def cache_assessment(cache_key: str, assessment: Dict[str, Any], url: str) -> No
         
         # Calculate TTL based on URL type
         if is_test_url(url):
-            ttl = int((datetime.utcnow() + timedelta(minutes=5)).timestamp())  # 5 minutes for test URLs
+            ttl = int((datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp())  # 5 minutes for test URLs
             logger.info(f"Using short TTL (5 minutes) for test URL: {url}")
         else:
-            ttl = int((datetime.utcnow() + timedelta(hours=24)).timestamp())  # 24 hours for regular URLs
+            ttl = int((datetime.now(timezone.utc) + timedelta(hours=24)).timestamp())  # 24 hours for regular URLs
         
         # Convert all float values to Decimal for DynamoDB compatibility
         assessment_for_cache = convert_floats_to_decimal(assessment)
         
+        # Store with original cache key for URL-based lookups
         table.put_item(
             Item={
                 'assessment_id': cache_key,
                 'assessment': assessment_for_cache,
                 'timestamp': assessment['timestamp'],
                 'ttl': ttl
+            }
+        )
+        
+        # Also store with assessmentId for chatbot retrieval
+        if 'assessmentId' in assessment:
+            table.put_item(
+                Item={
+                    'assessment_id': assessment['assessmentId'],
+                    'assessment': assessment_for_cache,
+                    'timestamp': assessment['timestamp'],
+                    'ttl': ttl
             }
         )
         
@@ -342,6 +371,6 @@ def error_response(status_code: int, message: str) -> Dict[str, Any]:
         },
         'body': json.dumps({
             'error': message,
-            'timestamp': datetime.utcnow().isoformat() + 'Z'
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }, cls=DecimalEncoder)
     }
