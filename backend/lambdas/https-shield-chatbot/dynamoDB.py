@@ -5,6 +5,7 @@ Handles conversation history storage and retrieval
 
 import os
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import boto3
 from botocore.exceptions import ClientError
 from logger_config import logger
@@ -18,25 +19,42 @@ risk_assessments_table = dynamodb.Table(RISK_ASSESSMENTS_TABLE_NAME)
 
 def get_conversation_history(session_id, limit=10):
     """
-    Retrieve recent conversation history for context
+    Retrieve recent conversation history for context using single-item architecture
     
     Args:
         session_id (str): Session identifier
         limit (int): Maximum number of conversation turns to retrieve
         
     Returns:
-        list: List of conversation turns in chronological order
+        list: List of conversation turns in chronological order (oldest first)
     """
     try:
+        # Query for the session - there should only be one item per session
+        # but we still need to use the timestamp sort key
         response = conversations_table.query(
             KeyConditionExpression='session_id = :sid',
             ExpressionAttributeValues={':sid': session_id},
-            ScanIndexForward=False,  # Most recent first
-            Limit=limit
+            Limit=1  # We expect only one item per session
         )
         
-        # Return in chronological order (oldest first)
-        history = list(reversed(response.get('Items', [])))
+        items = response.get('Items', [])
+        if not items:
+            logger.info(f"No conversation history found for session: {session_id}")
+            return []
+        
+        session_data = items[0]  # Take the first (and should be only) item
+        conversation_turns = session_data.get('conversation_turns', [])
+        
+        # Apply limit - take the most recent turns if limit is specified
+        if limit and len(conversation_turns) > limit:
+            # Take the last N turns (most recent)
+            limited_turns = conversation_turns[-limit:]
+        else:
+            limited_turns = conversation_turns
+        
+        # Convert Decimal objects back to Python numbers for processing
+        history = convert_decimals_to_numbers(limited_turns)
+        
         logger.info(f"Retrieved {len(history)} conversation turns for session: {session_id}")
         return history
         
@@ -49,7 +67,7 @@ def get_conversation_history(session_id, limit=10):
 
 def store_conversation_turn(session_id, user_message, bot_response, risk_context):
     """
-    Store conversation turn in DynamoDB with TTL
+    Store conversation turn in DynamoDB using single-item architecture
     
     Args:
         session_id (str): Session identifier
@@ -61,21 +79,96 @@ def store_conversation_turn(session_id, user_message, bot_response, risk_context
         bool: True if successful, False otherwise
     """
     try:
-        timestamp = datetime.now(timezone.utc).isoformat()
-        ttl = int((datetime.now(timezone.utc) + timedelta(days=7)).timestamp())  # 7 day TTL
+        current_time = datetime.now(timezone.utc)
+        timestamp = current_time.isoformat()
+        ttl = int((current_time + timedelta(days=7)).timestamp())  # 7 day TTL
         
-        conversations_table.put_item(
-            Item={
-                'session_id': session_id,
-                'timestamp': timestamp,
-                'user_message': user_message,
-                'bot_response': bot_response,
-                'risk_context': risk_context,
-                'ttl': ttl
-            }
-        )
+        # Convert all float values to Decimal for DynamoDB compatibility
+        risk_context_for_storage = convert_floats_to_decimal(risk_context) if risk_context else {}
         
-        logger.info(f"Stored conversation turn for session: {session_id}")
+        # First, try to check if session exists using query (since we have composite key)
+        try:
+            response = conversations_table.query(
+                KeyConditionExpression='session_id = :sid',
+                ExpressionAttributeValues={':sid': session_id},
+                Limit=1
+            )
+            items = response.get('Items', [])
+            session_exists = len(items) > 0
+            
+            if session_exists:
+                existing_item = items[0]
+                # Get current turn count
+                current_turns = len(existing_item.get('conversation_turns', []))
+                turn_number = current_turns + 1
+                # Store the existing timestamp for updates
+                existing_timestamp = existing_item['timestamp']
+            else:
+                turn_number = 1
+                existing_timestamp = None
+                
+        except ClientError:
+            # If query fails, assume session doesn't exist
+            session_exists = False
+            turn_number = 1
+            existing_timestamp = None
+        
+        # Create new conversation turn
+        new_turn = {
+            'timestamp': timestamp,
+            'user_message': user_message,
+            'bot_response': bot_response,
+            'turn_number': turn_number
+        }
+        new_turn = convert_floats_to_decimal(new_turn)
+        
+        if session_exists:
+            # Update existing session using the existing timestamp as sort key
+            conversations_table.update_item(
+                Key={
+                    'session_id': session_id,
+                    'timestamp': existing_timestamp
+                },
+                UpdateExpression='SET conversation_turns = list_append(conversation_turns, :new_turn), '
+                                'last_updated = :timestamp, '
+                                '#ttl = :ttl '
+                                'ADD session_metadata.total_turns :inc',
+                ExpressionAttributeNames={
+                    '#ttl': 'ttl'
+                },
+                ExpressionAttributeValues={
+                    ':new_turn': [new_turn],
+                    ':timestamp': timestamp,
+                    ':ttl': ttl,
+                    ':inc': 1
+                }
+            )
+            logger.info(f"Updated existing session {session_id} with turn #{turn_number}")
+        else:
+            # Create new session using current timestamp as sort key
+            assessment_id = risk_context_for_storage.get('assessmentId', '')
+            url = risk_context_for_storage.get('url', '')
+            risk_level = risk_context_for_storage.get('riskLevel', '')
+            
+            conversations_table.put_item(
+                Item={
+                    'session_id': session_id,
+                    'timestamp': timestamp,  # This becomes the sort key
+                    'created_at': timestamp,
+                    'last_updated': timestamp,
+                    'conversation_turns': [new_turn],
+                    'risk_context': risk_context_for_storage,
+                    'session_metadata': {
+                        'total_turns': 1,
+                        'assessment_id': assessment_id,
+                        'url': url,
+                        'risk_level': risk_level
+                    },
+                    'ttl': ttl
+                }
+            )
+            logger.info(f"Created new session {session_id} with turn #{turn_number}")
+        
         return True
         
     except ClientError as e:
@@ -85,46 +178,6 @@ def store_conversation_turn(session_id, user_message, bot_response, risk_context
         logger.error(f"Unexpected error storing conversation: {e}")
         return False
 
-def cleanup_expired_conversations():
-    """
-    Manual cleanup of expired conversations (TTL handles this automatically)
-    This function is provided for manual maintenance if needed
-    
-    Returns:
-        int: Number of items cleaned up
-    """
-    try:
-        current_time = int(datetime.now(timezone.utc).timestamp())
-        
-        # Scan for expired items (this is expensive, use TTL instead in production)
-        response = conversations_table.scan(
-            FilterExpression='#ttl < :current_time',
-            ExpressionAttributeNames={'#ttl': 'ttl'},
-            ExpressionAttributeValues={':current_time': current_time}
-        )
-        
-        items_to_delete = response.get('Items', [])
-        
-        # Delete expired items
-        deleted_count = 0
-        for item in items_to_delete:
-            try:
-                conversations_table.delete_item(
-                    Key={
-                        'session_id': item['session_id'],
-                        'timestamp': item['timestamp']
-                    }
-                )
-                deleted_count += 1
-            except ClientError as e:
-                logger.warning(f"Failed to delete expired item: {e}")
-        
-        logger.info(f"Manually cleaned up {deleted_count} expired conversation items")
-        return deleted_count
-        
-    except Exception as e:
-        logger.error(f"Error during manual cleanup: {e}")
-        return 0
 
 def get_risk_assessment(assessment_id):
     """
@@ -163,6 +216,29 @@ def get_risk_assessment(assessment_id):
         logger.error(f"Unexpected error retrieving assessment {assessment_id}: {e}")
         return None
 
+def convert_floats_to_decimal(obj):
+    """Recursively convert all float values to Decimal for DynamoDB compatibility"""
+    if isinstance(obj, dict):
+        return {k: convert_floats_to_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_floats_to_decimal(item) for item in obj]
+    elif isinstance(obj, float):
+        # Handle special float values
+        if obj != obj:  # NaN check
+            return Decimal('0')
+        elif obj == float('inf'):
+            return Decimal('999999')
+        elif obj == float('-inf'):
+            return Decimal('-999999')
+        else:
+            return Decimal(str(obj))
+    elif isinstance(obj, (int, bool)):
+        return obj  # Keep integers and booleans as-is
+    elif obj is None:
+        return obj  # Keep None as-is
+    else:
+        return obj
+
 def convert_decimals_to_numbers(obj):
     """
     Recursively convert DynamoDB Decimal objects to Python numbers
@@ -173,8 +249,6 @@ def convert_decimals_to_numbers(obj):
     Returns:
         Object with Decimals converted to int/float
     """
-    from decimal import Decimal
-    
     if isinstance(obj, dict):
         return {key: convert_decimals_to_numbers(value) for key, value in obj.items()}
     elif isinstance(obj, list):
@@ -190,7 +264,7 @@ def convert_decimals_to_numbers(obj):
 
 def get_session_statistics(session_id):
     """
-    Get statistics for a conversation session
+    Get statistics for a conversation session using single-item architecture
     
     Args:
         session_id (str): Session identifier
@@ -202,15 +276,33 @@ def get_session_statistics(session_id):
         response = conversations_table.query(
             KeyConditionExpression='session_id = :sid',
             ExpressionAttributeValues={':sid': session_id},
-            Select='COUNT'
+            Limit=1,
+            ProjectionExpression='session_metadata, created_at, last_updated'
         )
         
-        turn_count = response.get('Count', 0)
+        items = response.get('Items', [])
+        if not items:
+            return {
+                'session_id': session_id,
+                'total_turns': 0,
+                'messages_per_user': 0,
+                'created_at': None,
+                'last_updated': None
+            }
+        
+        session_data = items[0]
+        metadata = session_data.get('session_metadata', {})
+        total_turns = int(metadata.get('total_turns', 0))
         
         return {
             'session_id': session_id,
-            'total_turns': turn_count,
-            'messages_per_user': turn_count // 2 if turn_count > 0 else 0
+            'total_turns': total_turns,
+            'messages_per_user': total_turns // 2 if total_turns > 0 else 0,
+            'created_at': session_data.get('created_at'),
+            'last_updated': session_data.get('last_updated'),
+            'assessment_id': metadata.get('assessment_id', ''),
+            'url': metadata.get('url', ''),
+            'risk_level': metadata.get('risk_level', '')
         }
         
     except ClientError as e:
