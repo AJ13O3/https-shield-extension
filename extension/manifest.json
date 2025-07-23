@@ -36,6 +36,9 @@
       "src/pages/welcome.html",
       "src/pages/welcome.js",
       "src/services/api-client.js",
+      "src/components/chat/ChatService.js",
+      "src/components/chat/ChatWidget.js",
+      "src/components/chat/ChatWidget.css",
       "icons/*"
     ],
     "matches": ["<all_urls>"]
