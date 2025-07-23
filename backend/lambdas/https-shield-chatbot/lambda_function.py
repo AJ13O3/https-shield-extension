@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 # Import custom modules
 from logger_config import logger
-from model_response import generate_response, generate_suggested_questions
+from model_response import generate_response
 from dynamoDB import get_conversation_history, store_conversation_turn, get_risk_assessment
 
 def lambda_handler(event, context):
@@ -34,6 +34,8 @@ def lambda_handler(event, context):
         risk_context = body.get('context', {})
         
         logger.info(f"Processing chat request for session: {session_id}, assessment: {assessment_id}")
+        logger.info(f"Initial risk context keys: {list(risk_context.keys()) if risk_context else 'None'}")
+        logger.debug(f"Initial risk context: {json.dumps(risk_context, indent=2, default=str) if risk_context else 'None'}")
         
         # Retrieve full risk assessment data if assessment ID is provided
         if assessment_id:
@@ -42,23 +44,35 @@ def lambda_handler(event, context):
                 # Use complete risk assessment data as context
                 risk_context = risk_assessment
                 logger.info(f"Retrieved risk assessment data for {assessment_id}")
+                logger.info(f"Risk assessment keys: {list(risk_assessment.keys())}")
+                logger.debug(f"Complete risk assessment: {json.dumps(risk_assessment, indent=2, default=str)}")
             else:
                 logger.warning(f"No risk assessment found for ID: {assessment_id}")
         
         # Handle auto-message generation for initial chatbot display
         if message.strip().lower() == 'auto' and risk_context:
-            logger.info("Generating automatic initial message")
-            auto_message = generate_auto_message(risk_context)
+            logger.info("Generating automatic initial message using LLM")
             
-            # Generate suggested questions for the initial display
-            suggested_questions = generate_suggested_questions(risk_context, [])
+            # Use LLM to generate auto message with suggestions
+            llm_result = generate_response('auto', risk_context, [], response_mode='auto')
+            
+            if llm_result is None:
+                logger.error("LLM failed to generate auto message")
+                return create_error_response(500, 'AI assistant temporarily unavailable', session_id)
+            
+            response_text = llm_result.get('response', '')
+            suggested_questions = llm_result.get('suggestions', [])
+            
+            if not response_text:
+                logger.error("Auto message response is empty")
+                return create_error_response(500, 'AI assistant temporarily unavailable', session_id)
             
             # Store the auto-generated conversation turn
-            store_success = store_conversation_turn(session_id, 'auto', auto_message, risk_context)
+            store_success = store_conversation_turn(session_id, 'auto', response_text, risk_context)
             if not store_success:
                 logger.warning(f"Failed to store auto conversation for session: {session_id}")
             
-            return create_success_response(auto_message, session_id, suggested_questions)
+            return create_success_response(response_text, session_id, suggested_questions)
         
         # Validate input for regular messages
         if not message.strip():
@@ -71,11 +85,27 @@ def lambda_handler(event, context):
         # Get conversation history
         conversation_history = get_conversation_history(session_id)
         
-        # Generate response using Bedrock with RAG
-        response_text = generate_response(message, risk_context, conversation_history)
+        # Generate response using Bedrock with structured output
+        llm_result = generate_response(message, risk_context, conversation_history)
         
-        # Generate suggested questions for the next user interaction
-        suggested_questions = generate_suggested_questions(risk_context, conversation_history)
+        if llm_result is None:
+            logger.error("LLM failed to generate response")
+            return create_error_response(
+                500, 
+                'AI assistant temporarily unavailable', 
+                session_id
+            )
+        
+        response_text = llm_result.get('response', '')
+        suggested_questions = llm_result.get('suggestions', [])
+        
+        if not response_text:
+            logger.error("Response text is empty")
+            return create_error_response(
+                500, 
+                'AI assistant temporarily unavailable', 
+                session_id
+            )
         
         # Store conversation turn
         store_success = store_conversation_turn(session_id, message, response_text, risk_context)
@@ -150,73 +180,7 @@ def create_error_response(status_code, error_message, session_id):
         })
     }
 
-def generate_auto_message(risk_context):
-    """
-    Generate automatic initial message summarizing the risk assessment
-    
-    Args:
-        risk_context (dict): Complete risk assessment data
-        
-    Returns:
-        str: Auto-generated summary message
-    """
-    url = risk_context.get('url', 'this website')
-    risk_level = risk_context.get('riskLevel', 'UNKNOWN')
-    risk_score = risk_context.get('riskScore', 0)
-    protocol = risk_context.get('protocol', 'unknown')
-    
-    # Get threat assessment details if available
-    threat_assessment = risk_context.get('threat_assessment', {})
-    individual_scores = threat_assessment.get('individual_scores', {})
-    
-    # Build initial summary based on risk level
-    if risk_level == 'CRITICAL':
-        severity_msg = "🚨 **CRITICAL SECURITY ALERT** 🚨"
-        advice = "I strongly recommend **going back to safety immediately**. This site poses serious security risks."
-    elif risk_level == 'HIGH':
-        severity_msg = "⚠️ **HIGH SECURITY RISK** ⚠️"
-        advice = "Please proceed with **extreme caution**. Consider finding a safer alternative."
-    elif risk_level == 'MEDIUM':
-        severity_msg = "⚠️ **MODERATE SECURITY CONCERN** ⚠️"
-        advice = "This site has some security issues. Be cautious with sensitive information."
-    else:
-        severity_msg = "ℹ️ **SECURITY ASSESSMENT COMPLETE** ℹ️"
-        advice = "This site appears to have minimal security concerns, but stay vigilant."
-    
-    # Build threat details
-    threat_details = []
-    if protocol == 'http':
-        threat_details.append("• **Unencrypted connection** - Data can be intercepted")
-    
-    if individual_scores.get('google_safebrowsing', 0) > 0:
-        threat_details.append("• **Known security threats** detected by Google Safe Browsing")
-    
-    if individual_scores.get('virustotal', 0) > 0.1:
-        threat_details.append("• **Malware signatures** detected by security engines")
-    
-    if individual_scores.get('urlbert', 0) > 50:
-        threat_details.append("• **Suspicious URL patterns** identified by AI analysis")
-    
-    # Construct the full message
-    message_parts = [
-        severity_msg,
-        f"\nI've analyzed **{url}** and found a **{risk_level}** risk level (Score: {risk_score}/100).\n",
-        advice
-    ]
-    
-    if threat_details:
-        message_parts.append("\n**Key Security Issues:**")
-        message_parts.extend(threat_details)
-    
-    message_parts.extend([
-        "\n**How can I help?**",
-        "• Ask me to explain any security warnings",
-        "• Get advice on whether it's safe to proceed", 
-        "• Learn about protecting yourself online",
-        "• Understand what these security threats mean"
-    ])
-    
-    return "\n".join(message_parts)
+# Removed generate_auto_message - now handled by LLM with structured prompts
 
 def get_cors_headers():
     """
