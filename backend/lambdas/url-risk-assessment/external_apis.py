@@ -5,9 +5,6 @@ This module handles integration with external intelligence sources using urllib3
 - Google Safe Browsing API
 - VirusTotal API
 - WHOIS lookups
-
-Author: HTTPS Shield Extension Team
-Version: 3.0.0 (Function-based)
 """
 
 import json
@@ -106,14 +103,19 @@ def check_google_safebrowsing(url: str) -> Dict[str, Any]:
         return None
 
 def _process_safebrowsing_response(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Process Google Safe Browsing API response"""
+    """Process Google Safe Browsing API response with binary scoring"""
     threats = data.get('matches', [])
     
+    # Binary score: 1 if any threats found, 0 if empty response
+    binary_score = 1 if len(threats) > 0 else 0
+    
     result = {
+        'extracted_score': binary_score,       # For aggregation (binary 0/1)
+        'full_response': data,                 # Preserve full response for LLM context
         'is_safe': len(threats) == 0,
         'threat_count': len(threats),
         'threats': [],
-        'risk_score': 0.0,
+        'risk_score': binary_score * 100,      # Convert to 0-100 scale for compatibility
         'api_source': 'google_safebrowsing'
     }
     
@@ -126,11 +128,6 @@ def _process_safebrowsing_response(data: Dict[str, Any]) -> Dict[str, Any]:
             'platform': platform,
             'severity': _get_threat_severity(threat_type)
         })
-    
-    # Calculate risk score based on threats
-    if threats:
-        max_severity = max(_get_threat_severity(t.get('threatType', '')) for t in threats)
-        result['risk_score'] = min(max_severity * 25, 100)  # Scale to 0-100
     
     return result
 
@@ -194,7 +191,7 @@ def check_virustotal(url: str) -> Dict[str, Any]:
         return None
 
 def _process_virustotal_response(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Process VirusTotal API response"""
+    """Process VirusTotal API response with detection ratio scoring"""
     response_code = data.get('response_code', 0)
     
     if response_code != 1:
@@ -203,23 +200,23 @@ def _process_virustotal_response(data: Dict[str, Any]) -> Dict[str, Any]:
         return None
     
     positives = data.get('positives', 0)
-    total = data.get('total', 0)
+    total = data.get('total', 1)  # Avoid division by zero, default to 1
+    
+    # Calculate detection ratio (0.0 to 1.0)
+    ratio_score = positives / total if total > 0 else 0.0
     
     result = {
+        'extracted_score': ratio_score,        # For aggregation (0.0-1.0 ratio)
+        'full_response': data,                 # Preserve full response for LLM context
         'is_safe': positives == 0,
         'detections': positives,
         'total_scanners': total,
         'detection_ratio': f"{positives}/{total}",
-        'risk_score': 0.0,
+        'risk_score': ratio_score * 100,       # Convert to 0-100 scale for compatibility
         'api_source': 'virustotal',
         'scan_date': data.get('scan_date', ''),
         'permalink': data.get('permalink', '')
     }
-    
-    # Calculate risk score based on detection ratio
-    if total > 0:
-        detection_rate = positives / total
-        result['risk_score'] = min(detection_rate * 100, 100)
     
     return result
 
@@ -326,7 +323,7 @@ def _get_xml_text(root, tag: str) -> str:
     return element.text if element is not None and element.text else ''
 
 def _process_whois_response(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Process WhoisXMLAPI response"""
+    """Process WhoisXMLAPI response with heuristic scoring"""
     whois_record = data.get('WhoisRecord', {})
     
     # Check if there's a data error (domain not found, etc.)
@@ -335,7 +332,28 @@ def _process_whois_response(data: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"WHOIS data not available for domain: {whois_record.get('domainName', 'unknown')}")
         return None
     
+    # Calculate domain age in days
+    age_days = _calculate_domain_age_days(whois_record)
+    
+    # Calculate 5 sub-signals for heuristic scoring
+    age_score = _calculate_domain_age_risk(age_days)
+    reg_length_score = _calculate_registration_length_risk(whois_record)
+    registrar_score = _calculate_registrar_reputation_risk(whois_record)
+    privacy_score = _calculate_privacy_proxy_risk(whois_record)
+    country_score = _calculate_country_mismatch_risk(whois_record)
+    
+    # Weighted combination of sub-signals (total = 1.0)
+    heuristic_score = (
+        age_score * 0.3 +           # Domain age (30%)
+        reg_length_score * 0.2 +    # Registration length (20%)
+        registrar_score * 0.2 +     # Registrar reputation (20%)
+        privacy_score * 0.15 +      # Privacy/proxy usage (15%)
+        country_score * 0.15        # Country mismatch (15%)
+    )
+    
     result = {
+        'extracted_score': heuristic_score,    # For aggregation (0.0-1.0 heuristic)
+        'full_response': data,                 # Preserve full response for LLM context
         'domain': whois_record.get('domainName', ''),
         'registrar': whois_record.get('registrarName', ''),
         'creation_date': whois_record.get('createdDate', ''),
@@ -343,22 +361,34 @@ def _process_whois_response(data: Dict[str, Any]) -> Dict[str, Any]:
         'updated_date': whois_record.get('updatedDate', ''),
         'name_servers': whois_record.get('nameServers', {}).get('hostNames', []),
         'status': whois_record.get('status', ''),
-        'age_days': whois_record.get('estimatedDomainAge', 0),
-        'risk_score': 0.0,
-        'api_source': 'whoisxmlapi'
+        'age_days': age_days,
+        'risk_score': heuristic_score * 100,   # Convert to 0-100 scale for compatibility
+        'api_source': 'whoisxmlapi',
+        # Sub-signal breakdown for debugging
+        'sub_signals': {
+            'domain_age_risk': age_score,
+            'registration_length_risk': reg_length_score,
+            'registrar_reputation_risk': registrar_score,
+            'privacy_proxy_risk': privacy_score,
+            'country_mismatch_risk': country_score
+        }
     }
     
-    # Use estimatedDomainAge if available, otherwise calculate from creation date
+    return result
+
+def _calculate_domain_age_days(whois_record: Dict[str, Any]) -> int:
+    """Calculate domain age in days from WHOIS record"""
     age_days = 0
     
     # Try to get age from estimatedDomainAge field first
-    if result['age_days'] and str(result['age_days']).isdigit():
-        age_days = int(result['age_days'])
-    elif result['creation_date']:
+    estimated_age = whois_record.get('estimatedDomainAge', 0)
+    if estimated_age and str(estimated_age).isdigit():
+        age_days = int(estimated_age)
+    elif whois_record.get('createdDate'):
         try:
             from datetime import datetime
             # Handle different date formats from WhoisXMLAPI
-            creation_date_str = result['creation_date']
+            creation_date_str = whois_record.get('createdDate', '')
             if 'T' in creation_date_str:
                 # ISO format with timezone
                 creation_date = datetime.fromisoformat(creation_date_str.replace('Z', '+00:00'))
@@ -368,23 +398,138 @@ def _process_whois_response(data: Dict[str, Any]) -> Dict[str, Any]:
             
             age_days = (datetime.utcnow().replace(tzinfo=creation_date.tzinfo if creation_date.tzinfo else None) - creation_date).days
         except Exception as e:
-            logger.warning(f"Could not parse creation date: {result['creation_date']}, error: {e}")
+            logger.warning(f"Could not parse creation date: {creation_date_str}, error: {e}")
             age_days = 0
     
-    # Update the result with the calculated age
-    result['age_days'] = age_days
+    return max(0, age_days)
+
+def _calculate_domain_age_risk(age_days: int) -> float:
+    """Calculate risk score based on domain age (newer = higher risk)"""
+    if age_days <= 0:
+        return 1.0  # No age data = high risk
     
-    # Calculate risk score based on age (newer domains are riskier)
-    if age_days < 30:
-        result['risk_score'] = 80.0
-    elif age_days < 90:
-        result['risk_score'] = 60.0
-    elif age_days < 365:
-        result['risk_score'] = 40.0
+    # Exponential decay: newer domains are much riskier
+    # 2 years (730 days) to reach very low risk
+    return max(0.0, 1.0 - (age_days / 730.0))
+
+def _calculate_registration_length_risk(whois_record: Dict[str, Any]) -> float:
+    """Calculate risk based on registration period length"""
+    try:
+        from datetime import datetime
+        created_str = whois_record.get('createdDate', '')
+        expires_str = whois_record.get('expiresDate', '')
+        
+        if not created_str or not expires_str:
+            return 0.5  # No data = medium risk
+        
+        # Parse dates
+        if 'T' in created_str:
+            created = datetime.fromisoformat(created_str.replace('Z', '+00:00'))
+        else:
+            created = datetime.strptime(created_str, '%Y-%m-%d')
+            
+        if 'T' in expires_str:
+            expires = datetime.fromisoformat(expires_str.replace('Z', '+00:00'))
+        else:
+            expires = datetime.strptime(expires_str, '%Y-%m-%d')
+        
+        # Calculate registration length in years
+        reg_length_days = (expires - created).days
+        reg_length_years = reg_length_days / 365.25
+        
+        # Short-term registrations are riskier
+        if reg_length_years <= 1:
+            return 0.8  # 1 year or less = high risk
+        elif reg_length_years <= 2:
+            return 0.6  # 2 years = medium-high risk
+        elif reg_length_years <= 5:
+            return 0.3  # 2-5 years = medium-low risk
+        else:
+            return 0.1  # 5+ years = low risk
+            
+    except Exception as e:
+        logger.warning(f"Could not calculate registration length: {e}")
+        return 0.5  # Error = medium risk
+
+def _calculate_registrar_reputation_risk(whois_record: Dict[str, Any]) -> float:
+    """Calculate risk based on registrar reputation"""
+    registrar = whois_record.get('registrarName', '').lower()
+    
+    # Registrar risk mapping based on known reputation
+    REGISTRAR_RISK_MAP = {
+        # Reputable registrars (low risk)
+        'godaddy': 0.1, 'namecheap': 0.1, 'markmonitor': 0.05,
+        'cloudflare': 0.1, 'google': 0.05, 'amazon': 0.05,
+        'verisign': 0.05, 'network solutions': 0.1,
+        'enom': 0.2, 'tucows': 0.2, 'gandi': 0.1,
+        
+        # High-risk registrars often used by malicious actors
+        'freenom': 0.9, 'domains4bitcoins': 0.8,
+        'privacyprotect.org': 0.7, 'whoisguard': 0.6,
+        
+        # Medium-risk or unknown registrars
+        'namebright': 0.4, 'dynadot': 0.3
+    }
+    
+    # Check for exact matches or partial matches
+    for known_registrar, risk in REGISTRAR_RISK_MAP.items():
+        if known_registrar in registrar:
+            return risk
+    
+    # Default for unknown registrars
+    return 0.5
+
+def _calculate_privacy_proxy_risk(whois_record: Dict[str, Any]) -> float:
+    """Calculate risk based on privacy/proxy service usage"""
+    # Check multiple fields for privacy indicators
+    fields_to_check = [
+        whois_record.get('registrarName', ''),
+        whois_record.get('contactEmail', ''),
+        whois_record.get('status', ''),
+        str(whois_record.get('registrant', {}))  # Convert to string for checking
+    ]
+    
+    privacy_keywords = [
+        'privacy', 'whoisguard', 'domains by proxy', 'redacted',
+        'protect', 'private', 'proxy', 'masked', 'hidden',
+        'privacyprotect', 'domainsbyproxy', 'whoisprotection'
+    ]
+    
+    # Check all fields for privacy keywords
+    for field in fields_to_check:
+        field_lower = field.lower()
+        for keyword in privacy_keywords:
+            if keyword in field_lower:
+                return 0.7  # Privacy protection = medium-high risk
+    
+    return 0.2  # No privacy protection = low risk
+
+def _calculate_country_mismatch_risk(whois_record: Dict[str, Any]) -> float:
+    """Calculate risk based on registrant vs hosting country mismatch"""
+    # For now, implement basic logic - could be enhanced with IP geolocation
+    registrant_country = ''
+    
+    # Try to extract country from registrant info
+    registrant = whois_record.get('registrant', {})
+    if isinstance(registrant, dict):
+        registrant_country = registrant.get('countryCode', '') or registrant.get('country', '')
+    
+    # If no registrant country data, return medium risk
+    if not registrant_country:
+        return 0.4
+    
+    # High-risk country codes often associated with malicious domains
+    high_risk_countries = ['tk', 'ml', 'ga', 'cf']  # Freenom domains
+    medium_risk_countries = ['ru', 'cn']  # Countries with higher cybercrime activity
+    
+    registrant_country_lower = registrant_country.lower()
+    
+    if registrant_country_lower in high_risk_countries:
+        return 0.8
+    elif registrant_country_lower in medium_risk_countries:
+        return 0.6
     else:
-        result['risk_score'] = 10.0
-    
-    return result
+        return 0.2  # Most countries = low risk
 
 def get_combined_intelligence(url: str) -> Dict[str, Any]:
     """

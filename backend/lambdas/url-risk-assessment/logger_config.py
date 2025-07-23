@@ -3,9 +3,6 @@ Logger Configuration for HTTPS Shield Lambda Functions
 
 Provides centralized logging configuration for all Lambda functions
 with structured logging, proper formatting, and CloudWatch integration.
-
-Author: HTTPS Shield Extension Team
-Version: 1.0.0
 """
 
 import logging

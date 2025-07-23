@@ -2,10 +2,7 @@
 ML Inference Service for HTTPS Shield
 
 This module handles communication with SageMaker endpoints for ML model inference.
-It provides a unified interface for URLBERT and XGBoost model predictions.
-
-Author: HTTPS Shield Extension Team
-Version: 2.0.0 (Function-based)
+It provides URLBERT model predictions and simple threat aggregation logic.
 """
 
 import json
@@ -25,8 +22,7 @@ sagemaker_runtime = boto3.client('sagemaker-runtime')
 def _get_endpoint_names() -> Dict[str, str]:
     """Get SageMaker endpoint names from environment variables"""
     return {
-        'urlbert': os.environ.get('URLBERT_ENDPOINT_NAME'),
-        'xgboost': os.environ.get('XGBOOST_ENDPOINT_NAME')
+        'urlbert': os.environ.get('URLBERT_ENDPOINT_NAME')
     }
 
 def get_urlbert_prediction(url: str) -> Dict[str, Any]:
@@ -107,272 +103,122 @@ def _process_urlbert_response(response: Dict[str, Any]) -> Dict[str, Any]:
             'probabilities': {
                 'benign': probabilities.get('benign', 0.5),
                 'malicious': probabilities.get('malicious', 0.5)
-            },
-            'features_used': ['url_pattern_analysis', 'character_level_tokenization']
+            }
         }
         
     except Exception as e:
         logger.error(f"Error processing URLBERT response: {e}")
         return None
 
-def get_xgboost_prediction(features: Dict[str, Any]) -> Dict[str, Any]:
+def calculate_final_risk_score(urlbert_score: float, safebrowsing_binary: float, 
+                              virustotal_ratio: float, whois_heuristic: float) -> float:
     """
-    Get risk prediction from XGBoost model
+    Calculate final risk score using simple threat-weighted aggregation
     
     Args:
-        features: Feature dictionary for XGBoost model
+        urlbert_score: URLBERT prediction (0.0-1.0)
+        safebrowsing_binary: Google Safe Browsing binary flag (0 or 1)
+        virustotal_ratio: VirusTotal detection ratio (0.0-1.0)
+        whois_heuristic: WHOIS heuristic score (0.0-1.0)
         
     Returns:
-        Dictionary containing prediction results or None if endpoint unavailable
+        Final risk score (0.0-1.0)
     """
-    endpoints = _get_endpoint_names()
+    # If any critical threat detected, boost the score significantly
+    threat_boost = 0.0
+    if safebrowsing_binary == 1:  # Google detected threats
+        threat_boost = 0.3
+    elif virustotal_ratio > 0.5:  # Majority of engines flagged
+        threat_boost = 0.2
     
-    if not endpoints['xgboost']:
-        logger.warning("XGBoost endpoint not configured")
-        return None
+    # Base weighted combination
+    base_score = (
+        urlbert_score * 0.5 +      # URLBERT gets highest weight (AI analysis)
+        safebrowsing_binary * 0.25 + # Google Safe Browsing (binary)
+        virustotal_ratio * 0.15 +   # VirusTotal (continuous)
+        whois_heuristic * 0.1       # WHOIS (domain reputation)
+    )
     
-    try:
-        logger.info("Requesting XGBoost prediction")
-        
-        # Prepare features for XGBoost
-        feature_vector = _prepare_xgboost_features(features)
-        input_data = {
-            "instances": [feature_vector]
-        }
-        
-        # Make prediction request
-        start_time = time.time()
-        response = sagemaker_runtime.invoke_endpoint(
-            EndpointName=endpoints['xgboost'],
-            ContentType='application/json',
-            Body=json.dumps(input_data)
-        )
-        
-        # Log performance
-        inference_time = (time.time() - start_time) * 1000
-        log_performance_metric(logger, 'xgboost_inference', inference_time)
-        
-        # Parse response
-        result = json.loads(response['Body'].read().decode())
-        
-        # Extract prediction data
-        prediction = _process_xgboost_response(result)
-        
-        logger.info(f"XGBoost prediction complete: {prediction['risk_score']:.2f}")
-        return prediction
-        
-    except ClientError as e:
-        log_error(logger, e, {'operation': 'xgboost_prediction', 'features': str(features)})
-        return None
-    except Exception as e:
-        log_error(logger, e, {'operation': 'xgboost_prediction', 'features': str(features)})
-        return None
+    # Apply threat boost and cap at 1.0
+    final_score = min(base_score + threat_boost, 1.0)
+    
+    logger.info(f"Risk score calculation: URLBERT={urlbert_score:.3f}, "
+               f"SafeBrowsing={safebrowsing_binary}, VT={virustotal_ratio:.3f}, "
+               f"WHOIS={whois_heuristic:.3f}, boost={threat_boost}, final={final_score:.3f}")
+    
+    return final_score
 
-def _process_xgboost_response(response: Dict[str, Any]) -> Dict[str, Any]:
-    """Process XGBoost model response"""
-    try:
-        # Extract prediction from response
-        predictions = response.get('predictions', [])
-        if not predictions:
-            raise ValueError("No predictions in XGBoost response")
-        
-        prediction = predictions[0]
-        
-        # XGBoost typically returns probability scores
-        return {
-            'risk_score': float(prediction.get('risk_probability', 0.5)) * 100,
-            'confidence': float(prediction.get('confidence', 0.5)),
-            'model_version': 'xgboost-1.0',
-            'feature_importance': prediction.get('feature_importance', {}),
-            'decision_path': prediction.get('decision_path', [])
-        }
-        
-    except Exception as e:
-        logger.error(f"Error processing XGBoost response: {e}")
-        return None
-
-def _prepare_xgboost_features(features: Dict[str, Any]) -> List[float]:
+def get_combined_threat_assessment(url: str, external_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Prepare features for XGBoost model inference
-    
-    Args:
-        features: Raw feature dictionary
-        
-    Returns:
-        List of feature values in correct order
-    """
-    # Define feature order for XGBoost model
-    feature_order = [
-        'url_length',
-        'domain_length',
-        'subdomain_count',
-        'has_ip_address',
-        'has_suspicious_tld',
-        'has_suspicious_keywords',
-        'protocol_is_https',
-        'has_ssl_errors',
-        'domain_age_days',
-        'reputation_score',
-        'external_threat_score'
-    ]
-    
-    # Extract features in correct order
-    feature_vector = []
-    for feature_name in feature_order:
-        value = features.get(feature_name, 0.0)
-        # Ensure numeric value
-        if isinstance(value, bool):
-            value = 1.0 if value else 0.0
-        elif not isinstance(value, (int, float)):
-            value = 0.0
-        feature_vector.append(float(value))
-    
-    return feature_vector
-
-def create_ml_features(url: str, domain_analysis: Dict[str, Any], 
-                      error_analysis: Dict[str, Any], 
-                      external_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Create feature dictionary for ML models
+    Get combined threat assessment using URLBERT and external API scores
     
     Args:
         url: The URL being analyzed
-        domain_analysis: Domain analysis results
-        error_analysis: Error analysis results
-        external_data: External intelligence data
+        external_data: External intelligence data with individual API scores
         
     Returns:
-        Dictionary of features for ML inference
-    """
-    features = {
-        # URL-based features
-        'url_length': len(url),
-        'domain_length': domain_analysis.get('length', 0),
-        'subdomain_count': domain_analysis.get('subdomain_count', 0),
-        'has_ip_address': len(domain_analysis.get('suspicious_patterns', [])) > 0,
-        'has_suspicious_tld': any('tk' in pattern or 'ml' in pattern 
-                                for pattern in domain_analysis.get('suspicious_patterns', [])),
-        'has_suspicious_keywords': len(domain_analysis.get('risk_indicators', [])) > 0,
-        
-        # Security features
-        'protocol_is_https': url.startswith('https://'),
-        'has_ssl_errors': error_analysis.get('severity', 'UNKNOWN') in ['HIGH', 'CRITICAL'],
-        
-        # External intelligence features
-        'domain_age_days': external_data.get('domain_age', 0),
-        'reputation_score': external_data.get('reputation_score', 0.5),
-        'external_threat_score': external_data.get('combined_risk_score', 0.0) / 100.0,
-    }
-    
-    return features
-
-def get_combined_ml_prediction(url: str, domain_analysis: Dict[str, Any], 
-                              error_analysis: Dict[str, Any], 
-                              external_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Get combined prediction from both ML models
-    
-    Args:
-        url: The URL being analyzed
-        domain_analysis: Domain analysis results
-        error_analysis: Error analysis results
-        external_data: External intelligence data
-        
-    Returns:
-        Combined ML prediction results
+        Combined threat assessment results
     """
     try:
-        # Create features for ML models
-        features = create_ml_features(url, domain_analysis, error_analysis, external_data)
+        # Get URLBERT prediction
+        urlbert_result = None
+        urlbert_score = 0.0
         
-        # Get predictions from both models
-        urlbert_prediction = None
-        xgboost_prediction = None
-        
-        # Try URLBERT prediction
         try:
-            urlbert_prediction = get_urlbert_prediction(url)
+            urlbert_result = get_urlbert_prediction(url)
+            if urlbert_result:
+                # Convert URLBERT score from 0-100 to 0-1 for aggregation
+                urlbert_score = urlbert_result.get('risk_score', 0.0) / 100.0
         except Exception as e:
             logger.warning(f"URLBERT prediction failed: {e}")
         
-        # Try XGBoost prediction
-        try:
-            xgboost_prediction = get_xgboost_prediction(features)
-        except Exception as e:
-            logger.warning(f"XGBoost prediction failed: {e}")
+        # Extract individual API scores from external data
+        safebrowsing_score = 0.0
+        virustotal_score = 0.0
+        whois_score = 0.0
         
-        # Combine predictions
-        return _combine_predictions(urlbert_prediction, xgboost_prediction)
+        # Google Safe Browsing binary score
+        if external_data.get('google_safebrowsing'):
+            safebrowsing_score = external_data['google_safebrowsing'].get('extracted_score', 0.0)
+        
+        # VirusTotal detection ratio
+        if external_data.get('virustotal'):
+            virustotal_score = external_data['virustotal'].get('extracted_score', 0.0)
+        
+        # WHOIS heuristic score
+        if external_data.get('whois'):
+            whois_score = external_data['whois'].get('extracted_score', 0.0)
+        
+        # Calculate final risk score using simple aggregation
+        final_risk_score = calculate_final_risk_score(
+            urlbert_score, safebrowsing_score, virustotal_score, whois_score
+        )
+        
+        # Build result with full context for LLM
+        result = {
+            'final_risk_score': final_risk_score * 100,  # Convert to 0-100 scale
+            'individual_scores': {
+                'urlbert': urlbert_score * 100,  # Show original URLBERT score (0-100)
+                'google_safebrowsing': safebrowsing_score,
+                'virustotal': virustotal_score,
+                'whois': whois_score
+            },
+            'full_responses': {  # Preserve for LLM context
+                'urlbert': urlbert_result,
+                'google_safebrowsing': external_data.get('google_safebrowsing'),
+                'virustotal': external_data.get('virustotal'),
+                'whois': external_data.get('whois')
+            }
+        }
+        
+        logger.info(f"Combined threat assessment complete: {final_risk_score:.3f}")
+        return result
         
     except Exception as e:
-        log_error(logger, e, {'operation': 'combined_ml_prediction', 'url': url[:50]})
+        log_error(logger, e, {'operation': 'combined_threat_assessment', 'url': url[:50]})
         return {
-            'ml_risk_score': 0.0,
-            'ml_confidence': 0.0,
-            'models_used': [],
-            'individual_predictions': {},
-            'error': 'Combined ML prediction failed'
+            'final_risk_score': 0.0,
+            'individual_scores': {},
+            'full_responses': {},
+            'error': 'Combined threat assessment failed'
         }
-
-def _combine_predictions(urlbert_prediction: Optional[Dict[str, Any]], 
-                        xgboost_prediction: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Combine predictions from multiple ML models
-    
-    Args:
-        urlbert_prediction: URLBERT prediction results
-        xgboost_prediction: XGBoost prediction results
-        
-    Returns:
-        Combined prediction results
-    """
-    if not urlbert_prediction and not xgboost_prediction:
-        return {
-            'ml_risk_score': 0.0,
-            'ml_confidence': 0.0,
-            'models_used': [],
-            'individual_predictions': {},
-            'error': 'No ML predictions available (SageMaker endpoints not deployed)'
-        }
-    
-    # Initialize result
-    result = {
-        'ml_risk_score': 0.0,
-        'ml_confidence': 0.0,
-        'models_used': [],
-        'individual_predictions': {}
-    }
-    
-    scores = []
-    confidences = []
-    
-    # Process URLBERT prediction
-    if urlbert_prediction:
-        score = urlbert_prediction.get('risk_score', 0.0)
-        confidence = urlbert_prediction.get('confidence', 0.0)
-        scores.append(score)
-        confidences.append(confidence)
-        result['models_used'].append('urlbert')
-        result['individual_predictions']['urlbert'] = urlbert_prediction
-    
-    # Process XGBoost prediction
-    if xgboost_prediction:
-        score = xgboost_prediction.get('risk_score', 0.0)
-        confidence = xgboost_prediction.get('confidence', 0.0)
-        scores.append(score)
-        confidences.append(confidence)
-        result['models_used'].append('xgboost')
-        result['individual_predictions']['xgboost'] = xgboost_prediction
-    
-    # Combine scores (weighted average based on confidence)
-    if confidences:
-        total_confidence = sum(confidences)
-        if total_confidence > 0:
-            weighted_score = sum(s * c for s, c in zip(scores, confidences)) / total_confidence
-            result['ml_risk_score'] = weighted_score
-            result['ml_confidence'] = total_confidence / len(confidences)
-        else:
-            result['ml_risk_score'] = sum(scores) / len(scores)
-            result['ml_confidence'] = 0.5
-    
-    return result
