@@ -12,7 +12,9 @@ from logger_config import logger
 # Initialize DynamoDB
 dynamodb = boto3.resource('dynamodb', region_name='eu-west-2')
 CONVERSATIONS_TABLE_NAME = os.environ.get('CONVERSATIONS_TABLE_NAME', 'https-shield-conversations')
+RISK_ASSESSMENTS_TABLE_NAME = os.environ.get('RISK_ASSESSMENTS_TABLE_NAME', 'https-shield-risk-assessments')
 conversations_table = dynamodb.Table(CONVERSATIONS_TABLE_NAME)
+risk_assessments_table = dynamodb.Table(RISK_ASSESSMENTS_TABLE_NAME)
 
 def get_conversation_history(session_id, limit=10):
     """
@@ -123,6 +125,68 @@ def cleanup_expired_conversations():
     except Exception as e:
         logger.error(f"Error during manual cleanup: {e}")
         return 0
+
+def get_risk_assessment(assessment_id):
+    """
+    Retrieve risk assessment data using assessment ID
+    
+    Args:
+        assessment_id (str): Assessment identifier (e.g., RISK-20240115123456-abcd1234)
+        
+    Returns:
+        dict: Risk assessment data or None if not found
+    """
+    if not assessment_id:
+        logger.warning("Assessment ID is required")
+        return None
+        
+    try:
+        response = risk_assessments_table.get_item(
+            Key={'assessment_id': assessment_id}
+        )
+        
+        if 'Item' in response:
+            assessment_data = response['Item']['assessment']
+            logger.info(f"Retrieved risk assessment for ID: {assessment_id}")
+            
+            # Convert Decimal objects back to float/int for JSON serialization
+            assessment_data = convert_decimals_to_numbers(assessment_data)
+            return assessment_data
+        else:
+            logger.warning(f"No risk assessment found for ID: {assessment_id}")
+            return None
+            
+    except ClientError as e:
+        logger.error(f"DynamoDB error retrieving assessment {assessment_id}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving assessment {assessment_id}: {e}")
+        return None
+
+def convert_decimals_to_numbers(obj):
+    """
+    Recursively convert DynamoDB Decimal objects to Python numbers
+    
+    Args:
+        obj: Object that may contain Decimal values
+        
+    Returns:
+        Object with Decimals converted to int/float
+    """
+    from decimal import Decimal
+    
+    if isinstance(obj, dict):
+        return {key: convert_decimals_to_numbers(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimals_to_numbers(item) for item in obj]
+    elif isinstance(obj, Decimal):
+        # Convert Decimal to int if it's a whole number, otherwise float
+        if obj % 1 == 0:
+            return int(obj)
+        else:
+            return float(obj)
+    else:
+        return obj
 
 def get_session_statistics(session_id):
     """

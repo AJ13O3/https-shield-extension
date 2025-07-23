@@ -374,6 +374,93 @@ def get_fallback_response(message, risk_context):
 - How to protect yourself online
 - What to do if you encounter threats"""
 
+def generate_suggested_questions(risk_context, conversation_history):
+    """
+    Generate contextual suggested questions based on the current risk assessment and conversation
+    
+    Args:
+        risk_context (dict): Risk assessment context
+        conversation_history (list): Previous conversation turns
+        
+    Returns:
+        list: List of suggested questions
+    """
+    risk_level = risk_context.get('riskLevel', '').upper()
+    protocol = risk_context.get('protocol', '')
+    threat_assessment = risk_context.get('threat_assessment', {})
+    individual_scores = threat_assessment.get('individual_scores', {})
+    
+    # Base questions available for all risk levels
+    base_questions = []
+    
+    # Risk level specific questions
+    if risk_level == 'CRITICAL':
+        base_questions.extend([
+            "What makes this site so dangerous?",
+            "How can I protect my computer from malware?",
+            "What should I do if I already visited this site?",
+            "Can this site steal my personal information?"
+        ])
+    elif risk_level == 'HIGH':
+        base_questions.extend([
+            "Why is this site flagged as high risk?",
+            "Is it safe to enter my password here?",
+            "How can I find a safer alternative?",
+            "What information could be at risk?"
+        ])
+    elif risk_level == 'MEDIUM':
+        base_questions.extend([
+            "What security issues does this site have?",
+            "Should I avoid entering personal information?",
+            "How can I make this connection more secure?",
+            "When is it okay to proceed anyway?"
+        ])
+    else:
+        base_questions.extend([
+            "How can I verify this site is really safe?",
+            "What security best practices should I follow?",
+            "How do I know if a site is encrypted?",
+            "What signs should I watch for?"
+        ])
+    
+    # Protocol-specific questions
+    if protocol == 'http':
+        base_questions.append("Why is HTTPS important for security?")
+    
+    # Threat-specific questions based on individual scores
+    if individual_scores.get('google_safebrowsing', 0) > 0:
+        base_questions.append("What did Google Safe Browsing detect?")
+    
+    if individual_scores.get('virustotal', 0) > 0.1:
+        base_questions.append("What kind of malware was detected?")
+    
+    if individual_scores.get('urlbert', 0) > 50:
+        base_questions.append("What makes this URL look suspicious?")
+    
+    # Remove questions that have already been asked in conversation
+    asked_questions = set()
+    for turn in conversation_history:
+        user_msg = turn.get('user_message', '').lower()
+        if user_msg and user_msg != 'auto':
+            asked_questions.add(user_msg)
+    
+    # Filter out similar questions and limit to 4
+    filtered_questions = []
+    for question in base_questions:
+        question_lower = question.lower()
+        # Simple similarity check - if core words don't match previous questions
+        if not any(
+            len(set(question_lower.split()) & set(asked.split())) > 2 
+            for asked in asked_questions
+        ):
+            filtered_questions.append(question)
+        
+        if len(filtered_questions) >= 4:
+            break
+    
+    logger.debug(f"Generated {len(filtered_questions)} suggested questions for risk level: {risk_level}")
+    return filtered_questions
+
 def get_model_info():
     """
     Get information about the current Bedrock model configuration
