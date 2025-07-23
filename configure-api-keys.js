@@ -13,44 +13,33 @@ async function configureAPIKeys() {
   console.log('====================================');
   
   // Get current configuration
-  const existingConfig = await chrome.storage.sync.get(['apiConfig', 'chatApiConfig']);
+  const existingConfig = await chrome.storage.sync.get(['apiConfig']);
   
-  console.log('Current Risk Assessment API:', existingConfig.apiConfig?.apiKey ? 'Configured ✅' : 'Not configured ❌');
-  console.log('Current Chat API:', existingConfig.chatApiConfig?.apiKey ? 'Configured ✅' : 'Not configured ❌');
+  console.log('Current API Configuration:', existingConfig.apiConfig?.apiKey ? 'Configured ✅' : 'Not configured ❌');
   
-  // Risk Assessment API Key
-  const riskApiKey = prompt('Enter your Risk Assessment API Key (from AWS API Gateway 7razok9dpj):');
-  if (riskApiKey && riskApiKey.trim()) {
+  // Single API Key for both Risk Assessment and Chat endpoints
+  const apiKey = prompt('Enter your API Key (from AWS API Gateway 7razok9dpj):\n\nThis key will be used for both /analyze-url and /chat endpoints.');
+  
+  if (apiKey && apiKey.trim()) {
     await chrome.storage.sync.set({
       apiConfig: {
         baseUrl: 'https://7razok9dpj.execute-api.eu-west-2.amazonaws.com/prod',
-        apiKey: riskApiKey.trim()
+        apiKey: apiKey.trim()
       }
     });
-    console.log('✅ Risk Assessment API key configured');
+    console.log('✅ API key configured for both endpoints');
+    console.log('   📊 Risk Assessment: /analyze-url');
+    console.log('   💬 Chat Assistant: /chat');
   } else {
-    console.log('⚠️ Risk Assessment API key skipped');
-  }
-  
-  // Chat API Key
-  const chatApiKey = prompt('Enter your Chat API Key (from AWS API Gateway 8i76flzg45):');
-  if (chatApiKey && chatApiKey.trim()) {
-    await chrome.storage.sync.set({
-      chatApiConfig: {
-        endpoint: 'https://8i76flzg45.execute-api.eu-west-2.amazonaws.com/prod/chat',
-        apiKey: chatApiKey.trim()
-      }
-    });
-    console.log('✅ Chat API key configured');
-  } else {
-    console.log('⚠️ Chat API key skipped');
+    console.log('⚠️ API key configuration skipped');
+    return false;
   }
   
   // Verify configuration
-  const newConfig = await chrome.storage.sync.get(['apiConfig', 'chatApiConfig']);
+  const newConfig = await chrome.storage.sync.get(['apiConfig']);
   console.log('\n🎉 Configuration Complete!');
-  console.log('Risk Assessment API:', newConfig.apiConfig?.apiKey ? 'Configured ✅' : 'Not configured ❌');
-  console.log('Chat API:', newConfig.chatApiConfig?.apiKey ? 'Configured ✅' : 'Not configured ❌');
+  console.log('API Key:', newConfig.apiConfig?.apiKey ? 'Configured ✅' : 'Not configured ❌');
+  console.log('Base URL:', newConfig.apiConfig?.baseUrl || 'Not set');
   console.log('\nYou can now use the extension with full API functionality.');
   
   return true;

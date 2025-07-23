@@ -3,8 +3,9 @@
  */
 class ChatService {
   constructor() {
-    // API configuration - these should match your deployed API Gateway
-    this.apiEndpoint = 'https://8i76flzg45.execute-api.eu-west-2.amazonaws.com/prod/chat';
+    // API configuration - using same API Gateway as risk assessment
+    this.apiBaseUrl = 'https://7razok9dpj.execute-api.eu-west-2.amazonaws.com/prod';
+    this.chatEndpoint = '/chat';
     this.apiKey = null; // Will be loaded from secure storage
     this.timeout = 30000; // 30 second timeout
     this.initialize();
@@ -15,14 +16,14 @@ class ChatService {
    */
   async initialize() {
     try {
-      // Load API configuration from Chrome storage
-      const config = await chrome.storage.sync.get(['chatApiConfig']);
-      if (config.chatApiConfig) {
-        this.apiEndpoint = config.chatApiConfig.endpoint || this.apiEndpoint;
-        this.apiKey = config.chatApiConfig.apiKey;
+      // Load API configuration from Chrome storage (same as risk assessment)
+      const config = await chrome.storage.sync.get(['apiConfig']);
+      if (config.apiConfig) {
+        this.apiBaseUrl = config.apiConfig.baseUrl || this.apiBaseUrl;
+        this.apiKey = config.apiConfig.apiKey;
       }
     } catch (error) {
-      console.warn('Failed to load chat API configuration:', error);
+      console.warn('Failed to load API configuration:', error);
     }
   }
 
@@ -42,7 +43,7 @@ class ChatService {
 
       // If still no API key, throw error
       if (!this.apiKey) {
-        throw new Error('Chat API key not configured. Please configure in extension settings.');
+        throw new Error('API key not configured. Please configure in extension settings.');
       }
 
       console.log('ChatService: Sending message', { message, context });
@@ -59,11 +60,12 @@ class ChatService {
         }
       };
 
-      const response = await fetch(this.apiEndpoint, {
+      const fullEndpoint = `${this.apiBaseUrl}${this.chatEndpoint}`;
+      const response = await fetch(fullEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': this.apiKey,
+          'X-Api-Key': this.apiKey,
           'Accept': 'application/json'
         },
         body: JSON.stringify(requestBody),
