@@ -5,8 +5,25 @@ class ChatService {
   constructor() {
     // API configuration - these should match your deployed API Gateway
     this.apiEndpoint = 'https://8i76flzg45.execute-api.eu-west-2.amazonaws.com/prod/chat';
-    this.apiKey = 'n8EsMcQoKn2cxmwZxKy2H7UqVhFb0C5M5JnDrWJH'; // From API Gateway
+    this.apiKey = null; // Will be loaded from secure storage
     this.timeout = 30000; // 30 second timeout
+    this.initialize();
+  }
+
+  /**
+   * Initialize API configuration from secure storage
+   */
+  async initialize() {
+    try {
+      // Load API configuration from Chrome storage
+      const config = await chrome.storage.sync.get(['chatApiConfig']);
+      if (config.chatApiConfig) {
+        this.apiEndpoint = config.chatApiConfig.endpoint || this.apiEndpoint;
+        this.apiKey = config.chatApiConfig.apiKey;
+      }
+    } catch (error) {
+      console.warn('Failed to load chat API configuration:', error);
+    }
   }
 
   /**
@@ -17,6 +34,17 @@ class ChatService {
    */
   async sendMessage(message, context) {
     try {
+      // Ensure API key is loaded before making request
+      if (!this.apiKey) {
+        console.log('Chat API key not loaded, reinitializing...');
+        await this.initialize();
+      }
+
+      // If still no API key, throw error
+      if (!this.apiKey) {
+        throw new Error('Chat API key not configured. Please configure in extension settings.');
+      }
+
       console.log('ChatService: Sending message', { message, context });
 
       const requestBody = {

@@ -84,3 +84,19 @@ dist/
 # Temporary files
 *.tmp
 *.temp
+
+# API Keys and Secrets - NEVER COMMIT THESE!
+*.key
+*.secret
+api-keys.json
+config/secrets.json
+secrets/
+*-api-key.js
+*-secrets.js
+api-config-private.json
+configure-api-keys-filled.js
+
+# Configuration files with sensitive data
+*-config-private.js
+*-secrets.js
+api-config.json

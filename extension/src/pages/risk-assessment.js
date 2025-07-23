@@ -116,21 +116,19 @@ function displayRiskResults(riskData) {
     riskFill.style.width = `${riskScore}%`;
     riskFill.className = `risk-fill ${riskClass}`;
     
-    // Display recommendations instead of generic details
-    const recommendations = riskData.recommendations || [
-        'No encryption for data transmission',
-        'Potential for man-in-the-middle attacks',
-        'Cannot verify site authenticity'
-    ];
-    
-    const detailsHtml = '<ul>' + 
-        recommendations.map(rec => `<li>${rec}</li>`).join('') +
-        '</ul>';
+    // Display risk score details only - no hardcoded recommendations
+    const detailsHtml = `
+        <div class="risk-score-details">
+            <p><strong>Risk Score:</strong> ${riskScore}/100</p>
+            <p><strong>Domain:</strong> ${riskData.domain || 'Unknown'}</p>
+            <p><strong>Protocol:</strong> ${riskData.protocol || 'HTTP'}</p>
+        </div>
+    `;
     document.getElementById('riskDetails').innerHTML = detailsHtml;
     
-    // Store detailed analysis info for advanced view
-    if (riskData.analysis) {
-        document.getElementById('detailedRiskInfo').innerHTML = formatAdvancedAnalysis(riskData.analysis);
+    // Store threat assessment data for advanced view if available
+    if (riskData.threat_assessment) {
+        document.getElementById('detailedRiskInfo').innerHTML = formatThreatAssessment(riskData.threat_assessment);
     }
     
     // Add data source indicator
@@ -151,6 +149,28 @@ function displayRiskResults(riskData) {
             timestamp: new Date().toISOString()
         };
     }
+}
+
+function formatThreatAssessment(threatData) {
+    if (!threatData) return '<p>No threat assessment data available.</p>';
+    
+    let html = '<div class="threat-assessment">';
+    
+    // Display raw threat data
+    if (threatData.final_risk_score !== undefined) {
+        html += `<p><strong>Final Risk Score:</strong> ${threatData.final_risk_score}</p>`;
+    }
+    
+    if (threatData.individual_scores) {
+        html += '<h4>Individual Scores:</h4><ul>';
+        for (const [source, score] of Object.entries(threatData.individual_scores)) {
+            html += `<li><strong>${source}:</strong> ${score}</li>`;
+        }
+        html += '</ul>';
+    }
+    
+    html += '</div>';
+    return html;
 }
 
 function formatAdvancedAnalysis(analysis) {
