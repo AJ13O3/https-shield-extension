@@ -10,10 +10,11 @@ from logger_config import logger
 
 # Initialize AWS clients
 bedrock_runtime = boto3.client('bedrock-runtime', region_name='eu-west-2')
-kendra = boto3.client('kendra', region_name='eu-west-2')
+bedrock_agent_runtime = boto3.client('bedrock-agent-runtime', region_name='eu-west-2')
 
 # Environment variables
-KENDRA_INDEX_ID = os.environ.get('KENDRA_INDEX_ID', '')
+KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID', '')
+KNOWLEDGE_BASE_MODEL_ARN = os.environ.get('KNOWLEDGE_BASE_MODEL_ARN', 'arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-haiku-20240307-v1:0')
 BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'anthropic.claude-3-haiku-20240307-v1:0')
 
 def generate_response(message, risk_context, conversation_history):
@@ -29,11 +30,20 @@ def generate_response(message, risk_context, conversation_history):
         str: Generated response text
     """
     try:
-        # Enhance message with knowledge base context
-        enhanced_context = enhance_with_knowledge_base(message, risk_context)
+        # Try Knowledge Base enhanced response first
+        if KNOWLEDGE_BASE_ID:
+            kb_response = query_knowledge_base(message, risk_context)
+            if kb_response['success']:
+                logger.info("Generated response using Bedrock Knowledge Base")
+                return kb_response['response']
+            else:
+                logger.warning(f"Knowledge Base query failed: {kb_response.get('error', 'Unknown error')}")
         
-        # Build the system prompt
-        system_prompt = build_system_prompt(risk_context, enhanced_context)
+        # Fallback to regular converse API without Knowledge Base
+        logger.info("Using fallback converse API without Knowledge Base")
+        
+        # Build the system prompt with risk context only
+        system_prompt = build_system_prompt(risk_context, "")
         
         # Build messages array from conversation history
         messages = build_messages_array(message, conversation_history)
@@ -53,7 +63,7 @@ def generate_response(message, risk_context, conversation_history):
         output_message = response['output']['message']
         if output_message['content'] and len(output_message['content']) > 0:
             response_text = output_message['content'][0]['text']
-            logger.info(f"Generated response using Bedrock model: {BEDROCK_MODEL_ID}")
+            logger.info(f"Generated response using Bedrock converse API: {BEDROCK_MODEL_ID}")
             return response_text
         else:
             logger.warning("Empty response from Bedrock")
@@ -66,85 +76,154 @@ def generate_response(message, risk_context, conversation_history):
         logger.error(f"Unexpected error in Bedrock response: {e}")
         return get_fallback_response(message, risk_context)
 
-def enhance_with_knowledge_base(message, risk_context):
+def query_knowledge_base(message, risk_context, session_id=None):
     """
-    Use Kendra to enhance the message with relevant security knowledge
+    Query Bedrock Knowledge Base for enhanced security guidance
     
     Args:
         message (str): User's message
         risk_context (dict): Risk assessment context
+        session_id (str): Optional session ID for conversation continuity
         
     Returns:
-        str: Enhanced context from knowledge base
+        dict: Response with success status, response text, session ID, and citations
     """
-    if not KENDRA_INDEX_ID:
-        logger.info("Kendra not configured, skipping knowledge enhancement")
-        return ""
+    if not KNOWLEDGE_BASE_ID:
+        logger.info("Knowledge Base not configured")
+        return {'success': False, 'error': 'Knowledge Base not configured'}
     
     try:
-        # Create search query combining user message and risk context
-        search_query = build_kendra_query(message, risk_context)
+        # Build enhanced query with risk context
+        enhanced_query = build_knowledge_base_query(message, risk_context)
         
-        response = kendra.query(
-            IndexId=KENDRA_INDEX_ID,
-            QueryText=search_query,
-            PageSize=3  # Top 3 most relevant results
-        )
+        # Prepare the request parameters
+        request_params = {
+            'input': {'text': enhanced_query},
+            'retrieveAndGenerateConfiguration': {
+                'type': 'KNOWLEDGE_BASE',
+                'knowledgeBaseConfiguration': {
+                    'knowledgeBaseId': KNOWLEDGE_BASE_ID,
+                    'modelArn': KNOWLEDGE_BASE_MODEL_ARN,
+                    'retrievalConfiguration': {
+                        'vectorSearchConfiguration': {
+                            'numberOfResults': 5,
+                            'overrideSearchType': 'SEMANTIC'
+                        }
+                    },
+                    'generationConfiguration': {
+                        'promptTemplate': {
+                            'textPromptTemplate': """You are an expert security assistant for the HTTPS Shield browser extension. 
+Based on the following security knowledge: $search_results$
+
+User context: The user is browsing a website with the following security assessment:
+- Risk Level: {risk_level}
+- Risk Score: {risk_score}/100
+- URL: {url}
+- Protocol: {protocol}
+
+User question: $query$
+
+Provide clear, actionable security guidance that:
+1. Explains the security situation in simple terms
+2. Offers specific steps the user can take
+3. Indicates the urgency/severity appropriately
+4. Focuses on practical protection measures
+
+Response:""".format(
+                                risk_level=risk_context.get('riskLevel', 'Unknown'),
+                                risk_score=risk_context.get('riskScore', 'Unknown'),
+                                url=risk_context.get('url', 'Unknown'),
+                                protocol=risk_context.get('protocol', 'Unknown')
+                            )
+                        }
+                    }
+                }
+            }
+        }
         
-        # Extract relevant passages
-        knowledge_context = []
-        for item in response.get('ResultItems', []):
-            if item.get('Type') == 'DOCUMENT':
-                excerpt = item.get('DocumentExcerpt', {}).get('Text', '')
-                if excerpt:
-                    knowledge_context.append(excerpt)
+        # Add session ID if provided for conversation continuity
+        if session_id:
+            request_params['sessionId'] = session_id
         
-        enhanced_context = "\n\n".join(knowledge_context) if knowledge_context else ""
-        logger.info(f"Enhanced context with {len(knowledge_context)} Kendra results")
-        return enhanced_context
+        # Query the knowledge base
+        response = bedrock_agent_runtime.retrieve_and_generate(**request_params)
+        
+        logger.info(f"Knowledge Base query successful for session: {response.get('sessionId', 'N/A')}")
+        
+        return {
+            'success': True,
+            'response': response['output']['text'],
+            'session_id': response['sessionId'],
+            'citations': response.get('citations', []),
+            'guardrails': response.get('guardrails', {})
+        }
         
     except ClientError as e:
-        logger.warning(f"Kendra query failed: {e}")
-        return ""
+        error_code = e.response['Error']['Code']
+        error_message = e.response['Error']['Message']
+        logger.error(f"Knowledge Base query failed: {error_code} - {error_message}")
+        
+        return {
+            'success': False,
+            'error': f"{error_code}: {error_message}",
+            'error_code': error_code
+        }
     except Exception as e:
-        logger.error(f"Unexpected error in Kendra enhancement: {e}")
-        return ""
+        logger.error(f"Unexpected error in Knowledge Base query: {e}")
+        return {
+            'success': False,
+            'error': f"Unexpected error: {str(e)}"
+        }
 
-def build_kendra_query(message, risk_context):
+def build_knowledge_base_query(message, risk_context):
     """
-    Build an effective search query for Kendra based on user message and risk context
+    Build an effective query for Bedrock Knowledge Base including risk context
     
     Args:
         message (str): User's message
         risk_context (dict): Risk assessment context
         
     Returns:
-        str: Optimized search query
+        str: Enhanced query for knowledge base
     """
     query_parts = [message]
     
-    # Add context-specific terms
+    # Add risk level context
     risk_level = risk_context.get('riskLevel', '')
     if risk_level == 'CRITICAL':
-        query_parts.append("malware phishing security threat")
+        query_parts.append("critical security threat malware phishing protection")
     elif risk_level == 'HIGH':
-        query_parts.append("security risk warning")
+        query_parts.append("high security risk warning protection measures")
+    elif risk_level == 'MEDIUM':
+        query_parts.append("security concern best practices")
     
-    # Add threat-specific terms
-    if 'threats' in risk_context:
-        for threat in risk_context['threats']:
+    # Add threat-specific context
+    if 'threats' in risk_context and risk_context['threats']:
+        threat_types = []
+        for threat in risk_context['threats'][:3]:  # Top 3 threats
             if isinstance(threat, dict):
                 threat_type = threat.get('type', '')
                 if threat_type:
-                    query_parts.append(threat_type)
+                    threat_types.append(threat_type)
+            else:
+                threat_types.append(str(threat))
+        
+        if threat_types:
+            query_parts.append(" ".join(threat_types))
     
-    # Add protocol context
+    # Add protocol and URL context
     if risk_context.get('protocol') == 'http':
-        query_parts.append("HTTP HTTPS encryption")
+        query_parts.append("HTTP insecure HTTPS encryption mixed content")
     
-    query = " ".join(query_parts)
-    logger.debug(f"Built Kendra query: {query}")
-    return query
+    # Add domain context if available
+    if 'domain' in risk_context:
+        domain = risk_context['domain']
+        if any(tld in domain for tld in ['.tk', '.ml', '.ga', '.cf']):
+            query_parts.append("suspicious domain free TLD security")
+    
+    enhanced_query = " ".join(query_parts)
+    logger.debug(f"Built Knowledge Base query: {enhanced_query}")
+    return enhanced_query
 
 def build_system_prompt(risk_context, enhanced_context):
     """
@@ -303,8 +382,9 @@ def get_model_info():
         dict: Model configuration information
     """
     return {
-        'model_id': BEDROCK_MODEL_ID,
-        'kendra_enabled': bool(KENDRA_INDEX_ID),
-        'kendra_index_id': KENDRA_INDEX_ID,
+        'bedrock_model_id': BEDROCK_MODEL_ID,
+        'knowledge_base_enabled': bool(KNOWLEDGE_BASE_ID),
+        'knowledge_base_id': KNOWLEDGE_BASE_ID,
+        'knowledge_base_model_arn': KNOWLEDGE_BASE_MODEL_ARN,
         'region': 'eu-west-2'
     }
