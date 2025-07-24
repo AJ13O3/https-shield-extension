@@ -677,7 +677,7 @@ async function proceedToSite() {
 function learnMore(e) {
     e.preventDefault();
     chrome.tabs.create({
-        url: 'https://www.eff.org/https-everywhere/how-https-everywhere-works'
+        url: 'https://www.ncsc.gov.uk/collection/top-tips-for-staying-secure-online'
     });
 }
 
