@@ -504,3 +504,148 @@
     transform: none;
   }
 }
+
+/* Shield to Bubble Animation */
+.shield-bubble {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(135deg, #1a73e8 0%, #1557b0 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(26, 115, 232, 0.3);
+  z-index: 2147483647;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.shield-bubble.expanded {
+  width: 64px;
+  height: 64px;
+  animation: shieldPulse 1s ease-out;
+}
+
+.shield-bubble.message-ready {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  animation: messageBounce 0.6s ease-out;
+}
+
+@keyframes shieldPulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 4px 16px rgba(26, 115, 232, 0.3);
+  }
+  50% {
+    transform: scale(1.15);
+    box-shadow: 0 8px 32px rgba(26, 115, 232, 0.5);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 4px 16px rgba(26, 115, 232, 0.3);
+  }
+}
+
+@keyframes messageBounce {
+  0% {
+    transform: scale(1) translateY(0);
+  }
+  30% {
+    transform: scale(1.1) translateY(-8px);
+  }
+  50% {
+    transform: scale(0.95) translateY(0);
+  }
+  70% {
+    transform: scale(1.05) translateY(-4px);
+  }
+  100% {
+    transform: scale(1) translateY(0);
+  }
+}
+
+.shield-bubble .shield-icon {
+  font-size: 24px;
+  transition: all 0.3s ease;
+}
+
+.shield-bubble.message-ready .shield-icon {
+  animation: iconRotate 0.6s ease-out;
+}
+
+@keyframes iconRotate {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.shield-bubble .message-indicator {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 16px;
+  height: 16px;
+  background: #ea4335;
+  border-radius: 50%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 2px 6px rgba(234, 67, 53, 0.4);
+}
+
+.shield-bubble.message-ready .message-indicator {
+  display: flex;
+  animation: indicatorPop 0.3s ease-out;
+}
+
+@keyframes indicatorPop {
+  0% {
+    transform: scale(0);
+  }
+  80% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.shield-bubble .bubble-tooltip {
+  position: absolute;
+  bottom: 70px;
+  right: 0;
+  background: #1f2937;
+  color: white;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(10px) scale(0.9);
+  transition: all 0.3s ease;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.shield-bubble.message-ready .bubble-tooltip {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.bubble-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 16px;
+  border: 6px solid transparent;
+  border-top-color: #1f2937;
+}

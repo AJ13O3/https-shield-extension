@@ -30,7 +30,12 @@ class ChatWidget {
    */
   render() {
     this.container.innerHTML = `
-      <div class="chat-widget" id="chatWidget">
+      <div class="shield-bubble" id="shieldBubble">
+        <span class="shield-icon">🛡️</span>
+        <div class="message-indicator">!</div>
+        <div class="bubble-tooltip">Click to view security analysis</div>
+      </div>
+      <div class="chat-widget" id="chatWidget" style="display: none;">
         <div class="chat-header">
           <div class="chat-title">
             <div class="chat-icon">🛡️</div>
@@ -105,6 +110,11 @@ class ChatWidget {
     // Chat bubble to reopen
     document.getElementById('chatBubble').addEventListener('click', () => {
       this.show();
+    });
+
+    // Shield bubble click handler
+    document.getElementById('shieldBubble').addEventListener('click', () => {
+      this.openChatFromShield();
     });
   }
 
@@ -285,7 +295,8 @@ class ChatWidget {
    */
   async showWelcomeMessage() {
     try {
-      this.showTypingIndicator();
+      // Start shield bubble animation
+      this.animateShieldBubble();
 
       // Send 'auto' message to get initial AI assessment with suggestions
       const response = await this.chatService.sendMessage('auto', {
@@ -293,13 +304,11 @@ class ChatWidget {
         sessionId: this.sessionId
       });
 
-      this.removeTypingIndicator();
-      this.addMessage('assistant', response.response);
+      // Message is ready, transform bubble
+      this.transformToMessageBubble();
       
-      // Update quick actions with initial suggestions
-      if (response.suggestions && Array.isArray(response.suggestions)) {
-        this.updateQuickActions(response.suggestions);
-      }
+      // Store the response for when user opens chat
+      this.pendingWelcomeMessage = response;
       
       // Update session ID if provided
       if (response.sessionId) {
@@ -360,8 +369,58 @@ class ChatWidget {
   show() {
     document.getElementById('chatWidget').style.display = 'flex';
     document.getElementById('chatBubble').style.display = 'none';
+    document.getElementById('shieldBubble').style.display = 'none';
     this.isMinimized = false;
     document.getElementById('chatWidget').classList.remove('minimized');
+  }
+
+  /**
+   * Open chat from shield bubble with animation
+   */
+  openChatFromShield() {
+    const shieldBubble = document.getElementById('shieldBubble');
+    shieldBubble.style.display = 'none';
+    this.show();
+    
+    // Show the pending welcome message if available
+    if (this.pendingWelcomeMessage) {
+      this.addMessage('assistant', this.pendingWelcomeMessage.response);
+      
+      // Update quick actions with initial suggestions
+      if (this.pendingWelcomeMessage.suggestions && Array.isArray(this.pendingWelcomeMessage.suggestions)) {
+        this.updateQuickActions(this.pendingWelcomeMessage.suggestions);
+      }
+      
+      // Clear pending message
+      this.pendingWelcomeMessage = null;
+    }
+  }
+
+  /**
+   * Animate shield bubble during loading
+   */
+  animateShieldBubble() {
+    const shieldBubble = document.getElementById('shieldBubble');
+    if (shieldBubble) {
+      shieldBubble.classList.add('expanded');
+    }
+  }
+
+  /**
+   * Transform shield bubble to message bubble
+   */
+  transformToMessageBubble() {
+    const shieldBubble = document.getElementById('shieldBubble');
+    if (shieldBubble) {
+      shieldBubble.classList.remove('expanded');
+      shieldBubble.classList.add('message-ready');
+      
+      // Update tooltip text
+      const tooltip = shieldBubble.querySelector('.bubble-tooltip');
+      if (tooltip) {
+        tooltip.textContent = 'Security analysis ready! Click to view';
+      }
+    }
   }
 
   /**
