@@ -7,7 +7,7 @@ class ChatWidget {
     this.riskContext = riskContext;
     this.chatService = new ChatService();
     this.messages = [];
-    this.sessionId = this.loadOrCreateSession();
+    this.sessionId = this.generateNewSessionId();
     this.isMinimized = false;
     this.isTyping = false;
     
@@ -22,7 +22,7 @@ class ChatWidget {
     this.render();
     this.attachEventListeners();
     await this.loadChatHistory();
-    this.showWelcomeMessage();
+    await this.showWelcomeMessage();
   }
 
   /**
@@ -44,18 +44,7 @@ class ChatWidget {
         <div class="chat-body">
           <div class="chat-messages" id="messageList"></div>
           <div class="quick-actions" id="quickActions">
-            <button class="quick-action-btn" data-message="What does this risk score mean?">
-              📊 Explain Risk Score
-            </button>
-            <button class="quick-action-btn" data-message="Is it safe to continue to this site?">
-              🔒 Is It Safe?
-            </button>
-            <button class="quick-action-btn" data-message="What threats were detected?">
-              ⚠️ Detected Threats
-            </button>
-            <button class="quick-action-btn" data-message="What should I do?">
-              💡 What Should I Do?
-            </button>
+            <!-- Dynamic suggestion buttons will be inserted here -->
           </div>
           <div class="chat-input-container">
             <input type="text" class="chat-input" id="chatInput" 
@@ -95,13 +84,14 @@ class ChatWidget {
     // Auto-resize input
     input.addEventListener('input', this.handleInputChange.bind(this));
 
-    // Quick action buttons
-    document.getElementById('quickActions').addEventListener('click', (e) => {
+    // Quick action buttons - using event delegation
+    this.quickActionsHandler = (e) => {
       if (e.target.classList.contains('quick-action-btn')) {
         const message = e.target.getAttribute('data-message');
         this.sendMessage(message);
       }
-    });
+    };
+    document.getElementById('quickActions').addEventListener('click', this.quickActionsHandler);
 
     // Minimize/close controls
     document.querySelector('.chat-minimize').addEventListener('click', () => {
@@ -172,6 +162,11 @@ class ChatWidget {
       this.removeTypingIndicator();
       this.addMessage('assistant', response.response);
       
+      // Update quick actions with new suggestions if provided
+      if (response.suggestions && Array.isArray(response.suggestions)) {
+        this.updateQuickActions(response.suggestions);
+      }
+      
       // Update session ID if provided
       if (response.sessionId) {
         this.sessionId = response.sessionId;
@@ -183,7 +178,7 @@ class ChatWidget {
     } catch (error) {
       console.error('Error sending message:', error);
       this.removeTypingIndicator();
-      this.addMessage('assistant', `❌ ${error.message}`, 'error');
+      this.addMessage('assistant', `Error: ${error.message}`, 'error');
     }
   }
 
@@ -286,26 +281,50 @@ class ChatWidget {
   }
 
   /**
-   * Show welcome message with context
+   * Show welcome message with context from API
    */
-  showWelcomeMessage() {
-    const riskLevel = this.riskContext?.riskLevel || 'UNKNOWN';
-    const riskScore = this.riskContext?.riskScore || 0;
-    const url = this.riskContext?.url || 'this site';
+  async showWelcomeMessage() {
+    try {
+      this.showTypingIndicator();
 
-    let welcomeMessage = `Hello! I'm here to help you understand the security risks for **${url}**.
+      // Send 'auto' message to get initial AI assessment with suggestions
+      const response = await this.chatService.sendMessage('auto', {
+        ...this.riskContext,
+        sessionId: this.sessionId
+      });
 
-**Risk Level**: ${riskLevel} (${riskScore}/100)
+      this.removeTypingIndicator();
+      this.addMessage('assistant', response.response);
+      
+      // Update quick actions with initial suggestions
+      if (response.suggestions && Array.isArray(response.suggestions)) {
+        this.updateQuickActions(response.suggestions);
+      }
+      
+      // Update session ID if provided
+      if (response.sessionId) {
+        this.sessionId = response.sessionId;
+      }
 
-You can ask me about:
-• What this risk score means
-• Whether it's safe to continue
-• What threats were detected
-• What you should do next
-
-Feel free to click the quick action buttons below or type your own question!`;
-
-    this.addMessage('assistant', welcomeMessage);
+    } catch (error) {
+      console.error('Error loading welcome message:', error);
+      this.removeTypingIndicator();
+      
+      // Fallback to basic welcome message if API fails
+      const url = this.riskContext?.url || 'this site';
+      const riskLevel = this.riskContext?.riskLevel || 'UNKNOWN';
+      const riskScore = this.riskContext?.riskScore || 0;
+      
+      const fallbackMessage = `Hello! I'm here to help with security questions about **${url}** (Risk: ${riskLevel} ${riskScore}/100). Please type your questions below.`;
+      this.addMessage('assistant', fallbackMessage);
+      
+      // Add basic fallback suggestions
+      this.updateQuickActions([
+        { title: "Risk Details", question: "What does this risk score mean?" },
+        { title: "Stay Safe", question: "Is it safe to continue to this site?" },
+        { title: "Next Steps", question: "What should I do?" }
+      ]);
+    }
   }
 
   /**
@@ -346,17 +365,18 @@ Feel free to click the quick action buttons below or type your own question!`;
   }
 
   /**
-   * Load or create session ID
+   * Generate a new unique session ID for each conversation
    */
-  loadOrCreateSession() {
-    const stored = localStorage.getItem('chatSessionId');
-    if (stored) {
-      return stored;
-    }
+  generateNewSessionId() {
+    // Always generate a new session ID for each chat widget instance
+    // Include URL context to make it unique per site
+    const urlHash = this.riskContext?.url ? 
+      btoa(this.riskContext.url).substring(0, 8) : 'unknown';
     
-    const newSession = this.chatService.generateSessionId();
-    localStorage.setItem('chatSessionId', newSession);
-    return newSession;
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 9);
+    
+    return `chat_${urlHash}_${timestamp}_${random}`;
   }
 
   /**
@@ -388,32 +408,13 @@ Feel free to click the quick action buttons below or type your own question!`;
 
   /**
    * Load chat history from Chrome storage
+   * Note: Since we generate new session IDs every time, no history will be found
    */
   async loadChatHistory() {
-    try {
-      let data = null;
-      
-      if (chrome?.storage?.local) {
-        const key = `chat_history_${this.sessionId}`;
-        const result = await chrome.storage.local.get(key);
-        data = result[key];
-      } else {
-        // Fallback to localStorage
-        const stored = localStorage.getItem(`chat_history_${this.sessionId}`);
-        data = stored ? JSON.parse(stored) : null;
-      }
-
-      if (data && data.messages) {
-        // Only load recent messages (last 24 hours)
-        const dayAgo = Date.now() - (24 * 60 * 60 * 1000);
-        if (data.timestamp > dayAgo) {
-          this.messages = data.messages;
-          this.renderAllMessages();
-        }
-      }
-    } catch (error) {
-      console.error('Error loading chat history:', error);
-    }
+    // Skip loading chat history since each conversation should start fresh
+    // with a new session ID. This method is kept for potential future use.
+    console.log('Starting fresh conversation with session ID:', this.sessionId);
+    return;
   }
 
   /**
@@ -428,6 +429,82 @@ Feel free to click the quick action buttons below or type your own question!`;
     });
     
     this.scrollToBottom();
+  }
+
+  /**
+   * Update quick actions with new suggestions from API response
+   */
+  updateQuickActions(suggestions) {
+    const quickActionsContainer = document.getElementById('quickActions');
+    if (!quickActionsContainer) return;
+
+    // Clear existing quick actions
+    quickActionsContainer.innerHTML = '';
+
+    // Add new suggestion buttons
+    suggestions.forEach((suggestion, index) => {
+      if (suggestion.title && suggestion.question) {
+        const button = document.createElement('button');
+        button.className = 'quick-action-btn';
+        button.setAttribute('data-message', suggestion.question);
+        button.innerHTML = `${this.getSuggestionIcon(index)} ${suggestion.title}`;
+        quickActionsContainer.appendChild(button);
+      }
+    });
+
+    // Event listener is already attached to the container via event delegation
+    // No need to re-attach listeners when updating suggestions
+  }
+
+  /**
+   * Get appropriate icon for suggestion based on index
+   */
+  getSuggestionIcon(index) {
+    const icons = ['📊', '🔒', '⚠️', '💡', '🛡️', '❓'];
+    return icons[index] || '💬';
+  }
+
+  /**
+   * Clean up old chat history (utility method for maintenance)
+   */
+  static async cleanupOldChatHistory(maxAgeHours = 24) {
+    try {
+      const cutoffTime = Date.now() - (maxAgeHours * 60 * 60 * 1000);
+      
+      if (chrome?.storage?.local) {
+        // Get all stored data
+        const allData = await chrome.storage.local.get(null);
+        const keysToRemove = [];
+        
+        for (const [key, value] of Object.entries(allData)) {
+          if (key.startsWith('chat_history_') && value.timestamp < cutoffTime) {
+            keysToRemove.push(key);
+          }
+        }
+        
+        if (keysToRemove.length > 0) {
+          await chrome.storage.local.remove(keysToRemove);
+          console.log(`Cleaned up ${keysToRemove.length} old chat history entries`);
+        }
+      } else {
+        // Fallback: clean localStorage
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('chat_history_')) {
+            try {
+              const data = JSON.parse(localStorage.getItem(key));
+              if (data.timestamp < cutoffTime) {
+                localStorage.removeItem(key);
+              }
+            } catch (e) {
+              // Remove malformed entries
+              localStorage.removeItem(key);
+            }
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error cleaning up chat history:', error);
+    }
   }
 }
 

@@ -9,7 +9,7 @@ import re
 import boto3
 from botocore.exceptions import ClientError
 from logger_config import logger
-from config import AUTO_MESSAGE_PROMPT, CONVERSATION_PROMPT, KNOWLEDGE_BASE_PROMPT_TEMPLATE
+from config import AUTO_MESSAGE_PROMPT, REGULAR_MESSAGE_PROMPT
 
 # Initialize AWS clients
 bedrock_runtime = boto3.client('bedrock-runtime', region_name='eu-west-2')
@@ -19,10 +19,12 @@ bedrock_agent_runtime = boto3.client('bedrock-agent-runtime', region_name='eu-we
 KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID', '')
 KNOWLEDGE_BASE_MODEL_ARN = os.environ.get('KNOWLEDGE_BASE_MODEL_ARN', 'arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-haiku-20240307-v1:0')
 BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'anthropic.claude-3-haiku-20240307-v1:0')
+KB_RELEVANCE_THRESHOLD = float(os.environ.get('KB_RELEVANCE_THRESHOLD', '0.7'))
+KB_MAX_DOCUMENTS = int(os.environ.get('KB_MAX_DOCUMENTS', '5'))
 
 def generate_response(message, risk_context, conversation_history, response_mode='regular'):
     """
-    Generate response using Amazon Bedrock with structured output
+    Generate response using Amazon Bedrock with optional Knowledge Base context
     
     Args:
         message (str): User's message or 'auto' for initial display
@@ -34,30 +36,23 @@ def generate_response(message, risk_context, conversation_history, response_mode
         dict: {'response': str, 'suggestions': list}
     """
     try:
-        # Try Knowledge Base for regular messages (not auto)
+        # Retrieve relevant context from Knowledge Base for regular messages (not auto)
+        kb_context = None
         if KNOWLEDGE_BASE_ID and response_mode == 'regular':
-            kb_response = query_knowledge_base(message, risk_context)
-            if kb_response['success']:
-                logger.info("Generated response using Bedrock Knowledge Base")
-                # Parse KB response for JSON structure
-                parsed_response = parse_json_response(kb_response['response'])
-                if parsed_response:
-                    return parsed_response
-                else:
-                    # If parsing fails, use raw response with empty suggestions
-                    return {
-                        'response': kb_response['response'],
-                        'suggestions': []
-                    }
+            kb_retrieval = retrieve_from_knowledge_base(message, risk_context)
+            if kb_retrieval['success'] and kb_retrieval['documents']:
+                kb_context = kb_retrieval['documents']
+                logger.info(f"Retrieved {len(kb_context)} relevant documents from Knowledge Base")
             else:
-                logger.warning(f"Knowledge Base query failed: {kb_response.get('error', 'Unknown error')}")
+                logger.info(f"No relevant Knowledge Base context found: {kb_retrieval.get('error', 'No documents')}")
         
-        # Build appropriate prompt based on mode
+        # Build appropriate prompt based on mode and available context
         if response_mode == 'auto':
             system_prompt = build_auto_prompt(risk_context)
             messages = [{"role": "user", "content": [{"text": "Generate security assessment"}]}]
         else:
-            system_prompt = build_conversation_prompt(risk_context, conversation_history, message)
+            # Regular mode - build prompt with optional KB context
+            system_prompt = build_regular_prompt(message, risk_context, conversation_history, kb_context)
             messages = build_messages_array(message, conversation_history)
         
         # Log the complete LLM call setup
@@ -119,13 +114,27 @@ def build_auto_prompt(risk_context):
     # Extract detailed threat analysis
     detailed_analysis = extract_detailed_threat_analysis(risk_context)
     
+    # Extract actual values from threat assessment if available
+    threat_assessment = risk_context.get('threat_assessment', {})
+    actual_risk_score = threat_assessment.get('final_risk_score', risk_context.get('riskScore', 0))
+    
+    # Convert to proper risk level based on actual score
+    if actual_risk_score >= 80:
+        actual_risk_level = 'CRITICAL'
+    elif actual_risk_score >= 60:
+        actual_risk_level = 'HIGH'
+    elif actual_risk_score >= 40:
+        actual_risk_level = 'MEDIUM'
+    else:
+        actual_risk_level = 'LOW'
+    
     prompt = AUTO_MESSAGE_PROMPT.format(
         url=risk_context.get('url', 'Unknown'),
         domain=risk_context.get('domain', 'Unknown'),
         protocol=risk_context.get('protocol', 'Unknown'),
         error_code=risk_context.get('errorCode', ''),
-        risk_level=risk_context.get('riskLevel', 'Unknown'),
-        risk_score=risk_context.get('riskScore', 0),
+        risk_level=f"{actual_risk_level}/100",
+        risk_score=actual_risk_score,
         timestamp=risk_context.get('timestamp', 'Unknown'),
         detailed_threat_analysis=detailed_analysis
     )
@@ -134,43 +143,6 @@ def build_auto_prompt(risk_context):
     logger.info("=== AUTO MESSAGE PROMPT TO LLM ===")
     logger.info(prompt)
     logger.info("=== END AUTO MESSAGE PROMPT ===")
-    
-    return prompt
-
-def build_conversation_prompt(risk_context, conversation_history, user_message):
-    """Build prompt for regular conversation"""
-    # Log the conversation setup
-    logger.info(f"Building conversation prompt for message: {user_message}")
-    logger.info(f"Risk context keys available: {list(risk_context.keys())}")
-    logger.debug(f"Complete risk context: {json.dumps(risk_context, indent=2, default=str)}")
-    
-    # Extract detailed threat analysis and threats summary
-    detailed_analysis = extract_detailed_threat_analysis(risk_context)
-    threats_context = extract_threats_summary(risk_context)
-    
-    logger.info(f"Generated detailed analysis length: {len(detailed_analysis)}")
-    logger.info(f"Generated threats summary: {threats_context}")
-    
-    # Format conversation history
-    history_text = format_conversation_history(conversation_history)
-    
-    prompt = CONVERSATION_PROMPT.format(
-        url=risk_context.get('url', 'Unknown'),
-        domain=risk_context.get('domain', 'Unknown'),
-        protocol=risk_context.get('protocol', 'Unknown'),
-        risk_level=risk_context.get('riskLevel', 'Unknown'),
-        risk_score=risk_context.get('riskScore', 0),
-        timestamp=risk_context.get('timestamp', 'Unknown'),
-        detailed_threat_analysis=detailed_analysis,
-        threats_context=threats_context,
-        conversation_history=history_text,
-        user_message=user_message
-    )
-    
-    # Log the complete prompt being sent to LLM
-    logger.info("=== CONVERSATION PROMPT TO LLM ===")
-    logger.info(prompt)
-    logger.info("=== END CONVERSATION PROMPT ===")
     
     return prompt
 
@@ -249,8 +221,22 @@ def parse_json_response(text):
             
             if suggestions_match:
                 suggestions_text = suggestions_match.group(1)
-                suggestion_matches = re.findall(r'"([^"]+)"', suggestions_text)
-                suggestions = suggestion_matches[:4]
+                # Try to extract title/question objects
+                object_matches = re.findall(r'\{\s*"title"\s*:\s*"([^"]+)"\s*,\s*"question"\s*:\s*"([^"]+)"\s*\}', suggestions_text)
+                for title, question in object_matches[:3]:  # Limit to 3
+                    suggestions.append({
+                        'title': title.strip(),
+                        'question': question.strip()
+                    })
+                
+                # Fallback: if no objects found, try old string format
+                if not suggestions:
+                    suggestion_matches = re.findall(r'"([^"]+)"', suggestions_text)
+                    for s in suggestion_matches[:3]:
+                        suggestions.append({
+                            'title': 'More Info',
+                            'question': s.strip()
+                        })
             
             return {
                 "response": response,
@@ -263,16 +249,26 @@ def parse_json_response(text):
     return None
 
 def validate_suggestions(suggestions):
-    """Validate suggestions without adding fake ones"""
+    """Validate suggestions in new title/question format"""
     validated = []
     
     if isinstance(suggestions, list):
-        for s in suggestions[:4]:
-            if isinstance(s, str) and 10 <= len(s) <= 200:  # Allow longer suggestions
-                validated.append(s.strip())
+        for s in suggestions[:3]:  # Limit to exactly 3 suggestions
+            if isinstance(s, dict):
+                title = s.get('title', '').strip()
+                question = s.get('question', '').strip()
+                
+                # Validate title: 2-4 words, 5-25 characters
+                if title and 5 <= len(title) <= 25 and len(title.split()) <= 4:
+                    # Validate question: reasonable length
+                    if question and 10 <= len(question) <= 200:
+                        validated.append({
+                            'title': title,
+                            'question': question
+                        })
     
-    # Return only valid suggestions, don't pad with fake ones
-    return validated
+    # Return only valid suggestions, enforce exactly 3 or fewer
+    return validated[:3]
 
 def extract_detailed_threat_analysis(risk_context):
     """
@@ -371,11 +367,22 @@ def extract_detailed_threat_analysis(risk_context):
 - Status: No domain information available
 - Assessment: Unable to perform domain reputation analysis""")
     
-    # Final Risk Assessment Summary
+    # Final Risk Assessment Summary - use actual calculated score
     final_score = threat_assessment.get('final_risk_score', 0)
+    
+    # Calculate actual risk level from final score
+    if final_score >= 80:
+        actual_risk_level = 'CRITICAL'
+    elif final_score >= 60:
+        actual_risk_level = 'HIGH'
+    elif final_score >= 40:
+        actual_risk_level = 'MEDIUM'
+    else:
+        actual_risk_level = 'LOW'
+    
     analysis_parts.append(f"""Combined Risk Assessment:
 - Final Risk Score: {final_score:.2f}/100
-- Risk Level: {risk_context.get('riskLevel', 'UNKNOWN')}
+- Risk Level: {actual_risk_level}
 - Assessment Method: Threat-weighted aggregation of all security services
 - Confidence: High (Multiple independent sources analyzed)""")
     
@@ -392,7 +399,6 @@ def extract_threats_summary(risk_context):
         str: Formatted threats summary
     """
     threat_assessment = risk_context.get('threat_assessment', {})
-    individual_scores = threat_assessment.get('individual_scores', {})
     full_responses = threat_assessment.get('full_responses', {})
     
     threats = []
@@ -402,7 +408,7 @@ def extract_threats_summary(risk_context):
     if gsb_data and not gsb_data.get('is_safe', True):
         gsb_threats = gsb_data.get('threats', [])
         for threat in gsb_threats:
-            threats.append(f"🛡️ {threat.get('type', 'Security concern')} identified by Google Safe Browsing")
+            threats.append(f"{threat.get('type', 'Security concern')} identified by Google Safe Browsing")
     
     # Check VirusTotal detections
     vt_data = full_responses.get('virustotal', {})
@@ -410,132 +416,119 @@ def extract_threats_summary(risk_context):
         positives = vt_data.get('full_response', {}).get('positives', 0)
         total = vt_data.get('full_response', {}).get('total', 0)
         if positives > 0:
-            threats.append(f"📊 {positives}/{total} security engines flagged this URL")
+            threats.append(f"{positives}/{total} security engines flagged this URL")
     
     # Check URLBERT classification
     urlbert_data = full_responses.get('urlbert', {})
     if urlbert_data and urlbert_data.get('classification') == 'malicious':
         confidence = urlbert_data.get('confidence', 0) * 100
-        threats.append(f"🤖 AI analysis indicates security concerns ({confidence:.1f}% confidence)")
+        threats.append(f"AI analysis indicates security concerns ({confidence:.1f}% confidence)")
     
     # Check protocol security
     if risk_context.get('protocol') == 'http':
-        threats.append("🔓 Unencrypted connection - consider HTTPS alternatives")
+        threats.append("Unencrypted connection - consider HTTPS alternatives")
     
     # Check error codes
     error_code = risk_context.get('errorCode', '')
     if error_code and error_code != 'none':
-        threats.append(f"⚠️ Browser reported: {error_code}")
+        threats.append(f"Browser reported: {error_code}")
     
+    # Always provide meaningful context, even for safe sites
     if not threats:
-        threats.append("✅ No significant security concerns detected")
+        protocol = risk_context.get('protocol', '')
+        risk_level = risk_context.get('riskLevel', '')
+        
+        if protocol == 'https':
+            threats.append("Secure HTTPS connection established")
+        
+        if risk_level == 'LOW':
+            threats.append("Security analysis completed - site appears safe")
+        elif protocol == 'https' and not risk_level:
+            threats.append("Secure browsing - good opportunity to learn about web security")
     
     return "\n".join(threats)
 
 # Removed fallback functions - Lambda should fail gracefully if LLM fails
 
-def query_knowledge_base(message, risk_context, session_id=None):
+def retrieve_from_knowledge_base(message, risk_context):
     """
-    Query Bedrock Knowledge Base for enhanced security guidance
+    Retrieve relevant documents from Bedrock Knowledge Base without generation
     
     Args:
         message (str): User's message
         risk_context (dict): Risk assessment context
-        session_id (str): Optional session ID for conversation continuity
         
     Returns:
-        dict: Response with success status, response text, session ID, and citations
+        dict: Response with success status, documents, and relevance scores
     """
     if not KNOWLEDGE_BASE_ID:
         logger.info("Knowledge Base not configured")
-        return {'success': False, 'error': 'Knowledge Base not configured'}
+        return {'success': False, 'error': 'Knowledge Base not configured', 'documents': []}
     
     try:
         # Build enhanced query with risk context
         enhanced_query = build_knowledge_base_query(message, risk_context)
         
-        # Log Knowledge Base query setup
-        logger.info(f"Setting up Knowledge Base query for message: {message}")
+        # Log Knowledge Base retrieval setup
+        logger.info(f"Setting up Knowledge Base retrieval for message: {message}")
         logger.info(f"Enhanced query: {enhanced_query}")
         logger.debug(f"Risk context for KB: {json.dumps(risk_context, indent=2, default=str)}")
         
-        # Extract detailed threat analysis for KB context
-        detailed_analysis = extract_detailed_threat_analysis(risk_context)
-        threats_summary = extract_threats_summary(risk_context)
-        
-        # Build the KB prompt template
-        kb_prompt_template = KNOWLEDGE_BASE_PROMPT_TEMPLATE.format(
-            url=risk_context.get('url', 'Unknown'),
-            domain=risk_context.get('domain', 'Unknown'),
-            protocol=risk_context.get('protocol', 'Unknown'),
-            risk_level=risk_context.get('riskLevel', 'Unknown'),
-            risk_score=risk_context.get('riskScore', 'Unknown'),
-            timestamp=risk_context.get('timestamp', 'Unknown'),
-            detailed_threat_analysis=detailed_analysis,
-            threats_summary=threats_summary
-        )
-        
-        # Log the Knowledge Base prompt template
-        logger.info("=== KNOWLEDGE BASE PROMPT TEMPLATE ===")
-        logger.info(kb_prompt_template)
-        logger.info("=== END KB PROMPT TEMPLATE ===")
-        
-        # Prepare the request parameters
+        # Prepare the retrieval request parameters
         request_params = {
-            'input': {'text': enhanced_query},
-            'retrieveAndGenerateConfiguration': {
-                'type': 'KNOWLEDGE_BASE',
-                'knowledgeBaseConfiguration': {
-                    'knowledgeBaseId': KNOWLEDGE_BASE_ID,
-                    'modelArn': KNOWLEDGE_BASE_MODEL_ARN,
-                    'retrievalConfiguration': {
-                        'vectorSearchConfiguration': {
-                            'numberOfResults': 5,
-                            'overrideSearchType': 'SEMANTIC'
-                        }
-                    },
-                    'generationConfiguration': {
-                        'promptTemplate': {
-                            'textPromptTemplate': kb_prompt_template
-                        }
-                    }
+            'knowledgeBaseId': KNOWLEDGE_BASE_ID,
+            'retrievalQuery': {'text': enhanced_query},
+            'retrievalConfiguration': {
+                'vectorSearchConfiguration': {
+                    'numberOfResults': int(os.environ.get('KB_MAX_DOCUMENTS', '5')),
+                    'overrideSearchType': 'SEMANTIC'
                 }
             }
         }
         
-        # Add session ID if provided for conversation continuity
-        if session_id:
-            request_params['sessionId'] = session_id
+        # Retrieve documents from knowledge base
+        response = bedrock_agent_runtime.retrieve(**request_params)
         
-        # Query the knowledge base
-        response = bedrock_agent_runtime.retrieve_and_generate(**request_params)
+        # Process and filter results by relevance
+        relevance_threshold = float(os.environ.get('KB_RELEVANCE_THRESHOLD', '0.7'))
+        relevant_documents = []
         
-        logger.info(f"Knowledge Base query successful for session: {response.get('sessionId', 'N/A')}")
+        for result in response.get('retrievalResults', []):
+            score = result.get('score', 0.0)
+            if score >= relevance_threshold:
+                relevant_documents.append({
+                    'content': result.get('content', {}).get('text', ''),
+                    'score': score,
+                    'source': result.get('location', {}).get('s3Location', {}).get('uri', 'Unknown'),
+                    'metadata': result.get('metadata', {})
+                })
         
-        # The KB response should now include JSON with suggestions
+        logger.info(f"Knowledge Base retrieval successful: {len(relevant_documents)} relevant documents found (threshold: {relevance_threshold})")
+        
         return {
             'success': True,
-            'response': response['output']['text'],
-            'session_id': response['sessionId'],
-            'citations': response.get('citations', []),
-            'guardrails': response.get('guardrails', {})
+            'documents': relevant_documents,
+            'total_results': len(response.get('retrievalResults', [])),
+            'relevant_count': len(relevant_documents)
         }
         
     except ClientError as e:
         error_code = e.response['Error']['Code']
         error_message = e.response['Error']['Message']
-        logger.error(f"Knowledge Base query failed: {error_code} - {error_message}")
+        logger.error(f"Knowledge Base retrieval failed: {error_code} - {error_message}")
         
         return {
             'success': False,
             'error': f"{error_code}: {error_message}",
-            'error_code': error_code
+            'error_code': error_code,
+            'documents': []
         }
     except Exception as e:
-        logger.error(f"Unexpected error in Knowledge Base query: {e}")
+        logger.error(f"Unexpected error in Knowledge Base retrieval: {e}")
         return {
             'success': False,
-            'error': f"Unexpected error: {str(e)}"
+            'error': f"Unexpected error: {str(e)}",
+            'documents': []
         }
 
 def build_knowledge_base_query(message, risk_context):
@@ -588,7 +581,70 @@ def build_knowledge_base_query(message, risk_context):
     logger.debug(f"Built Knowledge Base query: {enhanced_query}")
     return enhanced_query
 
-# Removed build_system_prompt - replaced by build_auto_prompt and build_conversation_prompt
+def build_regular_prompt(user_message, risk_context, conversation_history, kb_context=None):
+    """
+    Build system prompt for regular chatbot responses with optional KB context
+    
+    Args:
+        user_message (str): The user's current question/message
+        risk_context (dict): Risk assessment context
+        conversation_history (list): Previous conversation turns
+        kb_context (list): Optional knowledge base documents
+        
+    Returns:
+        str: System prompt for LLM
+    """
+    # Always start with REGULAR_MESSAGE_PROMPT as the base
+    detailed_analysis = extract_detailed_threat_analysis(risk_context)
+    threats_summary = extract_threats_summary(risk_context)
+    history_summary = format_conversation_history(conversation_history)
+    
+    # Format the base REGULAR_MESSAGE_PROMPT with context including user message
+    base_prompt = REGULAR_MESSAGE_PROMPT.format(
+        user_message=user_message,
+        url=risk_context.get('url', 'Unknown'),
+        domain=risk_context.get('domain', 'Unknown'),
+        protocol=risk_context.get('protocol', 'Unknown'),
+        error_code=risk_context.get('errorCode', ''),
+        risk_level=risk_context.get('riskLevel', 'Unknown'),
+        risk_score=risk_context.get('riskScore', 'Unknown'),
+        timestamp=risk_context.get('timestamp', 'Unknown'),
+        detailed_threat_analysis=detailed_analysis,
+        threats_summary=threats_summary,
+        conversation_history=history_summary
+    )
+    
+    # If no KB context, return the base prompt as-is
+    if not kb_context or len(kb_context) == 0:
+        return base_prompt
+    
+    # If KB context is available, enhance the base prompt by adding KB content
+    kb_context_parts = ["\n\nRelevant Security Knowledge (use this information when applicable):"]
+    kb_context_parts.append("<knowledge_base_context>")
+    
+    for i, doc in enumerate(kb_context[:3], 1):  # Limit to top 3 documents
+        content = doc['content'][:1000]  # Limit document length
+        score = doc['score']
+        kb_context_parts.append(f"Document {i} (Relevance: {score:.2f}):")
+        kb_context_parts.append(content)
+        kb_context_parts.append("")
+    
+    kb_context_parts.append("</knowledge_base_context>")
+    
+    # Add KB-specific instructions
+    kb_context_parts.extend([
+        "",
+        "Additional Instructions for Knowledge Base Context:",
+        "1. If the knowledge base context contains relevant information to answer the user's question, use it as your primary source",
+        "2. If the knowledge base context is not relevant or insufficient, rely on your general cybersecurity knowledge", 
+        "3. Always provide a helpful response regardless of knowledge base content quality",
+        "4. Be transparent about whether you're using specific documentation or general knowledge"
+    ])
+    
+    # Combine base prompt with KB enhancement
+    enhanced_prompt = base_prompt + "\n".join(kb_context_parts)
+    
+    return enhanced_prompt
 
 def build_messages_array(message, conversation_history):
     """
@@ -603,30 +659,46 @@ def build_messages_array(message, conversation_history):
     """
     messages = []
     
-    # Add recent conversation history
+    # Add recent conversation history - ensure proper user/assistant pairing
     for turn in conversation_history[-5:]:  # Last 5 turns for context
         user_msg = turn.get('user_message', '')
         bot_response = turn.get('bot_response', '')
         
-        if user_msg:
+        # Only add if we have a valid user message (not auto)
+        if user_msg and user_msg != 'auto':
             messages.append({
                 "role": "user",
                 "content": [{"text": user_msg}]
             })
-        
-        if bot_response:
-            messages.append({
-                "role": "assistant", 
-                "content": [{"text": bot_response}]
-            })
+            
+            # Only add bot response if we added the user message
+            if bot_response:
+                # Extract just the response text if it's JSON
+                if isinstance(bot_response, str) and bot_response.startswith('{'):
+                    try:
+                        parsed = json.loads(bot_response)
+                        bot_response = parsed.get('response', bot_response)
+                    except:
+                        pass
+                messages.append({
+                    "role": "assistant", 
+                    "content": [{"text": bot_response}]
+                })
     
-    # Add current message
+    # Add current message - this ensures conversation always ends with user message
     messages.append({
         "role": "user",
         "content": [{"text": message}]
     })
     
+    # Ensure the conversation starts with a user message
+    if len(messages) > 0 and messages[0]["role"] != "user":
+        logger.warning("Conversation doesn't start with user message, removing leading assistant messages")
+        while len(messages) > 0 and messages[0]["role"] != "user":
+            messages.pop(0)
+    
     logger.debug(f"Built messages array with {len(messages)} messages")
+    logger.debug(f"First message role: {messages[0]['role'] if messages else 'No messages'}")
     return messages
 
 # Removed generate_suggested_questions - now handled by LLM in structured response

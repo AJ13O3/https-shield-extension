@@ -51,12 +51,16 @@ class ChatService {
       const requestBody = {
         message: message,
         sessionId: context.sessionId || this.generateSessionId(),
-        riskContext: {
+        assessmentId: context.assessmentId,
+        context: {
           url: context.url,
           riskScore: context.riskScore,
           riskLevel: context.riskLevel,
-          threats: context.threats,
-          timestamp: new Date().toISOString()
+          domain: context.domain,
+          protocol: context.protocol,
+          errorCode: context.errorCode,
+          threat_assessment: context.threats || context.threat_assessment,
+          timestamp: context.timestamp || new Date().toISOString()
         }
       };
 
@@ -88,15 +92,17 @@ class ChatService {
         const bodyData = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
         return {
           response: bodyData.response || bodyData.message || 'I received your message but had trouble responding.',
+          suggestions: bodyData.suggestedQuestions || bodyData.suggestions || [],
           sessionId: bodyData.sessionId || context.sessionId,
-          timestamp: new Date().toISOString()
+          timestamp: bodyData.timestamp || new Date().toISOString()
         };
       } else {
         // Direct response format
         return {
           response: data.response || data.message || 'I received your message but had trouble responding.',
+          suggestions: data.suggestedQuestions || data.suggestions || [],
           sessionId: data.sessionId || context.sessionId,
-          timestamp: new Date().toISOString()
+          timestamp: data.timestamp || new Date().toISOString()
         };
       }
 

@@ -121,10 +121,13 @@ function displayRiskResults(riskData) {
         <div class="risk-score-details">
             <p><strong>Risk Score:</strong> ${riskScore}/100</p>
             <p><strong>Domain:</strong> ${riskData.domain || 'Unknown'}</p>
-            <p><strong>Protocol:</strong> ${riskData.protocol || 'HTTP'}</p>
+            <p><strong>Protocol:</strong> ${riskData.protocol || 'Unknown'}</p>
         </div>
     `;
     document.getElementById('riskDetails').innerHTML = detailsHtml;
+    
+    // Debug log to check the actual Lambda response structure
+    console.log('Full Lambda response data:', riskData);
     
     // Store threat assessment data for advanced view if available
     if (riskData.threat_assessment) {
@@ -135,8 +138,14 @@ function displayRiskResults(riskData) {
     const sourceIndicator = riskData.source === 'mock' ? ' (Offline Mode)' : '';
     document.getElementById('riskValue').title = `Risk Level: ${riskLevel}${sourceIndicator}`;
     
-    // Store risk data globally for chat widget
-    window.riskAssessment = riskData;
+    // Generate unique assessment ID from timestamp and URL hash
+    const assessmentId = `assess_${Date.now()}_${btoa(targetUrl).slice(0, 8)}`;
+    
+    // Store complete risk data globally for chat widget
+    window.riskAssessment = {
+        ...riskData,
+        assessmentId: assessmentId
+    };
     
     // Update chat widget if initialized
     if (chatWidget) {
@@ -144,9 +153,14 @@ function displayRiskResults(riskData) {
             url: targetUrl,
             riskScore: riskScore,
             riskLevel: riskLevel,
+            domain: riskData.domain,
+            protocol: riskData.protocol,
+            errorCode: riskData.errorCode,
             threats: riskData.threat_assessment || {},
+            threat_assessment: riskData.threat_assessment || {},
             analysis: riskData.analysis || {},
-            timestamp: new Date().toISOString()
+            assessmentId: assessmentId,
+            timestamp: riskData.timestamp || new Date().toISOString()
         };
     }
 }
@@ -469,14 +483,19 @@ function initializeChatWidget() {
             return;
         }
         
-        // Prepare risk context
+        // Prepare risk context with complete data - NO FALLBACKS
         const riskContext = {
             url: targetUrl,
-            riskScore: window.riskAssessment?.riskScore || 50,
-            riskLevel: window.riskAssessment?.riskLevel || 'MEDIUM',
+            riskScore: window.riskAssessment?.riskScore,
+            riskLevel: window.riskAssessment?.riskLevel,
+            domain: window.riskAssessment?.domain,
+            protocol: window.riskAssessment?.protocol,
+            errorCode: window.riskAssessment?.errorCode,
             threats: window.riskAssessment?.threat_assessment || {},
+            threat_assessment: window.riskAssessment?.threat_assessment || {},
             analysis: window.riskAssessment?.analysis || {},
-            timestamp: new Date().toISOString(),
+            assessmentId: window.riskAssessment?.assessmentId,
+            timestamp: window.riskAssessment?.timestamp || new Date().toISOString(),
             sessionId: `risk_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         };
         
