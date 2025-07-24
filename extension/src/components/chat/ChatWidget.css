@@ -3,8 +3,8 @@
   position: fixed;
   bottom: 20px;
   right: 20px;
-  width: 560px;
-  height: 800px;
+  width: 392px; /* 30% smaller: 560px * 0.7 */
+  height: 560px; /* 30% smaller: 800px * 0.7 */
   background: #ffffff;
   border-radius: 16px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
@@ -206,8 +206,8 @@
 }
 
 .typing-dots span {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: #9ca3af;
   animation: typing 1.4s infinite ease-in-out;
@@ -277,17 +277,17 @@
 }
 
 .quick-action-btn {
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 20px;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
   color: #475569;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .quick-action-btn:hover {
@@ -371,8 +371,8 @@
   position: fixed;
   bottom: 20px;
   right: 20px;
-  width: 60px;
-  height: 60px;
+  width: 48px;
+  height: 48px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   border-radius: 50%;
   display: flex;
@@ -403,19 +403,19 @@
 }
 
 .bubble-icon {
-  font-size: 24px;
+  font-size: 20px;
   color: white;
 }
 
 .bubble-text {
   position: absolute;
-  bottom: 70px;
+  bottom: 58px;
   right: 0;
   background: #1f2937;
   color: white;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
   white-space: nowrap;
   opacity: 0;
   transform: translateY(10px);
