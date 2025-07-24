@@ -491,9 +491,10 @@ function displayDetailedRisks(threatAssessment) {
     // VirusTotal
     if (full_responses.virustotal) {
         const vt = full_responses.virustotal;
-        const fullResponse = vt.full_response || {};
-        const positives = fullResponse.positives || 0;
-        const total = fullResponse.total || 0;
+        console.log('VirusTotal data:', vt);
+        const fullResponse = vt.full_response || vt || {};
+        const positives = fullResponse.positives || vt.positives || 0;
+        const total = fullResponse.total || vt.total || 0;
         html += `
             <div class="accordion-item">
                 <h4 class="accordion-header">
@@ -502,10 +503,10 @@ function displayDetailedRisks(threatAssessment) {
                     <span class="risk-badge ${positives > 0 ? 'high' : 'low'}">${positives}/${total} detections</span>
                 </h4>
                 <div class="accordion-content">
-                    <p><strong>Scan Date:</strong> ${fullResponse.scan_date || 'N/A'}</p>
+                    <p><strong>Scan Date:</strong> ${fullResponse.scan_date || vt.scan_date || 'N/A'}</p>
                     <p><strong>Detections:</strong> ${positives} out of ${total} engines</p>
-                    <p><strong>Detection Ratio:</strong> ${vt.detection_ratio ? (vt.detection_ratio * 100).toFixed(1) + '%' : '0%'}</p>
-                    ${fullResponse.permalink ? `<p><a href="${fullResponse.permalink}" target="_blank" rel="noopener">View full report →</a></p>` : ''}
+                    <p><strong>Detection Ratio:</strong> ${total > 0 ? ((positives / total) * 100).toFixed(1) + '%' : '0.0%'}</p>
+                    ${fullResponse.permalink || vt.permalink ? `<p><a href="${fullResponse.permalink || vt.permalink}" target="_blank" rel="noopener">View full report →</a></p>` : ''}
                 </div>
             </div>
         `;
