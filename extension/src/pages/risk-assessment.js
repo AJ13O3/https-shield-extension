@@ -417,7 +417,7 @@ function displayDetailedRisks(threatAssessment) {
     // Overall Risk Summary
     html += `
         <div class="accordion-item">
-            <h4 class="accordion-header" onclick="toggleAccordion(this)">
+            <h4 class="accordion-header">
                 <span class="accordion-icon">▼</span>
                 Overall Risk Assessment
                 <span class="risk-badge ${getRiskClass(final_risk_score)}">${final_risk_score?.toFixed(1) || 'N/A'}/100</span>
@@ -443,7 +443,7 @@ function displayDetailedRisks(threatAssessment) {
         const urlbert = full_responses.urlbert;
         html += `
             <div class="accordion-item">
-                <h4 class="accordion-header" onclick="toggleAccordion(this)">
+                <h4 class="accordion-header">
                     <span class="accordion-icon">▶</span>
                     AI URL Analysis (URLBERT)
                     <span class="risk-badge ${urlbert.classification === 'malicious' ? 'critical' : 'low'}">${urlbert.classification || 'Unknown'}</span>
@@ -463,7 +463,7 @@ function displayDetailedRisks(threatAssessment) {
         const threats = gsb.threats || [];
         html += `
             <div class="accordion-item">
-                <h4 class="accordion-header" onclick="toggleAccordion(this)">
+                <h4 class="accordion-header">
                     <span class="accordion-icon">▶</span>
                     Google Safe Browsing
                     <span class="risk-badge ${threats.length > 0 ? 'critical' : 'low'}">${threats.length > 0 ? 'Threats Found' : 'Clear'}</span>
@@ -496,7 +496,7 @@ function displayDetailedRisks(threatAssessment) {
         const total = fullResponse.total || 0;
         html += `
             <div class="accordion-item">
-                <h4 class="accordion-header" onclick="toggleAccordion(this)">
+                <h4 class="accordion-header">
                     <span class="accordion-icon">▶</span>
                     VirusTotal Security Scan
                     <span class="risk-badge ${positives > 0 ? 'high' : 'low'}">${positives}/${total} detections</span>
@@ -516,7 +516,7 @@ function displayDetailedRisks(threatAssessment) {
         const whois = full_responses.whois;
         html += `
             <div class="accordion-item">
-                <h4 class="accordion-header" onclick="toggleAccordion(this)">
+                <h4 class="accordion-header">
                     <span class="accordion-icon">▶</span>
                     Domain Information (WHOIS)
                     <span class="risk-badge medium">Score: ${(whois.risk_score * 100).toFixed(0)}/100</span>
@@ -540,6 +540,17 @@ function displayDetailedRisks(threatAssessment) {
     
     html += '</div>';
     container.innerHTML = html;
+    
+    // Add event listeners for accordion headers after DOM is updated
+    setTimeout(() => {
+        const accordionHeaders = container.querySelectorAll('.accordion-header');
+        accordionHeaders.forEach(header => {
+            header.style.cursor = 'pointer';
+            header.addEventListener('click', function() {
+                toggleAccordion(this);
+            });
+        });
+    }, 0);
 }
 
 function formatServiceName(service) {
@@ -562,15 +573,28 @@ function getRiskClass(score) {
 function toggleAccordion(header) {
     const content = header.nextElementSibling;
     const icon = header.querySelector('.accordion-icon');
+    const isCurrentlyOpen = content.style.display === 'block';
     
-    if (content.style.display === 'none' || !content.style.display) {
+    // Close all accordions first
+    const allAccordions = document.querySelectorAll('.accordion-header');
+    allAccordions.forEach(accordionHeader => {
+        const accordionContent = accordionHeader.nextElementSibling;
+        const accordionIcon = accordionHeader.querySelector('.accordion-icon');
+        if (accordionContent && accordionIcon) {
+            accordionContent.style.display = 'none';
+            accordionIcon.textContent = '▶';
+        }
+    });
+    
+    // If the clicked accordion was closed, open it
+    if (!isCurrentlyOpen) {
         content.style.display = 'block';
         icon.textContent = '▼';
-    } else {
-        content.style.display = 'none';
-        icon.textContent = '▶';
     }
 }
+
+// Make toggleAccordion available globally for onclick handlers
+window.toggleAccordion = toggleAccordion;
 
 async function proceedToSite() {
     if (!targetUrl) return;
