@@ -63,14 +63,23 @@
             </div>
         </div>
 
-        <div class="advanced-details" id="advancedDetails" style="display: none;">
-            <h3>Detailed Risk Information</h3>
-            <div id="detailedRiskInfo"></div>
-        </div>
 
         <div class="footer">
             <p>HTTPS Shield is protecting you from insecure connections</p>
             <a href="#" id="learnMoreLink">Learn more about HTTPS security</a>
+        </div>
+    </div>
+
+    <!-- Modal for detailed risks -->
+    <div class="modal-overlay" id="detailsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Detailed Risk Information</h3>
+                <button class="modal-close" id="closeModal">×</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Content will be dynamically added here -->
+            </div>
         </div>
     </div>
 

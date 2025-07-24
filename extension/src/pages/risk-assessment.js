@@ -56,6 +56,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('proceedBtn').addEventListener('click', proceedToSite);
     document.getElementById('learnMoreLink').addEventListener('click', learnMore);
     
+    // Modal handlers
+    document.getElementById('closeModal').addEventListener('click', closeModal);
+    document.getElementById('detailsModal').addEventListener('click', function(e) {
+        if (e.target === this) closeModal();
+    });
+    
     // Initialize chat widget after a short delay to ensure DOM is ready
     setTimeout(initializeChatWidget, 1000);
 });
@@ -97,24 +103,38 @@ async function analyzeRisk() {
 
 
 function displayRiskResults(riskData) {
+    // Check if required elements exist
+    const loadingEl = document.getElementById('riskLoading');
+    const resultsEl = document.getElementById('riskResults');
+    const riskValueEl = document.getElementById('riskValue');
+    const riskFillEl = document.getElementById('riskFill');
+    const riskDetailsEl = document.getElementById('riskDetails');
+    
+    if (!loadingEl || !resultsEl || !riskValueEl || !riskFillEl || !riskDetailsEl) {
+        console.error('Required DOM elements not found');
+        return;
+    }
+    
     // Hide loading, show results
-    document.getElementById('riskLoading').style.display = 'none';
-    document.getElementById('riskResults').style.display = 'block';
+    loadingEl.style.display = 'none';
+    resultsEl.style.display = 'block';
     
     // Get risk data from API response
-    const riskScore = riskData.riskScore || 75;
+    const riskScore = Math.round(riskData.riskScore || 75);
     const riskLevel = riskData.riskLevel || 'HIGH';
     const riskClass = riskLevel.toLowerCase();
     
-    // Update risk display
-    const riskValue = document.getElementById('riskValue');
-    riskValue.textContent = riskLevel;
-    riskValue.className = `risk-value ${riskClass}`;
+    // Create tooltip text
+    const tooltipText = `Risk score: ${riskScore}/100. Based on AI threat analysis, domain reputation, and security checks.`;
+    
+    // Update risk display with tooltip
+    riskValueEl.textContent = `${riskLevel} (${riskScore}/100)`;
+    riskValueEl.className = `risk-value ${riskClass}`;
+    riskValueEl.setAttribute('data-tooltip', tooltipText);
     
     // Update risk bar
-    const riskFill = document.getElementById('riskFill');
-    riskFill.style.width = `${riskScore}%`;
-    riskFill.className = `risk-fill ${riskClass}`;
+    riskFillEl.style.width = `${riskScore}%`;
+    riskFillEl.className = `risk-fill ${riskClass}`;
     
     // Display risk score details only - no hardcoded recommendations
     const detailsHtml = `
@@ -124,14 +144,14 @@ function displayRiskResults(riskData) {
             <p><strong>Protocol:</strong> ${riskData.protocol || 'Unknown'}</p>
         </div>
     `;
-    document.getElementById('riskDetails').innerHTML = detailsHtml;
+    riskDetailsEl.innerHTML = detailsHtml;
     
     // Debug log to check the actual Lambda response structure
     console.log('Full Lambda response data:', riskData);
     
-    // Store threat assessment data for advanced view if available
+    // Store threat assessment data globally for modal view
     if (riskData.threat_assessment) {
-        document.getElementById('detailedRiskInfo').innerHTML = formatThreatAssessment(riskData.threat_assessment);
+        window.threatAssessmentData = riskData.threat_assessment;
     }
     
     // Add data source indicator
@@ -367,25 +387,27 @@ function goBack() {
 }
 
 function toggleDetails() {
-    const details = document.getElementById('advancedDetails');
-    const button = document.getElementById('viewDetailsBtn');
+    const modal = document.getElementById('detailsModal');
+    modal.classList.add('active');
     
-    if (details.style.display === 'none') {
-        details.style.display = 'block';
-        button.textContent = 'Hide Detailed Risks';
-        
-        // Format and display detailed risk information
-        if (window.riskAssessment && window.riskAssessment.threat_assessment) {
-            displayDetailedRisks(window.riskAssessment.threat_assessment);
-        }
+    // Format and display detailed risk information in modal
+    if (window.threatAssessmentData) {
+        displayDetailedRisks(window.threatAssessmentData);
+    } else if (window.riskAssessment && window.riskAssessment.threat_assessment) {
+        displayDetailedRisks(window.riskAssessment.threat_assessment);
     } else {
-        details.style.display = 'none';
-        button.textContent = 'View Detailed Risks';
+        // Show a message if no detailed data is available
+        document.getElementById('modalBody').innerHTML = '<p>No detailed risk information available.</p>';
     }
 }
 
+function closeModal() {
+    const modal = document.getElementById('detailsModal');
+    modal.classList.remove('active');
+}
+
 function displayDetailedRisks(threatAssessment) {
-    const container = document.getElementById('detailedRiskInfo');
+    const container = document.getElementById('modalBody');
     if (!container || !threatAssessment) return;
     
     const { full_responses = {}, individual_scores = {}, final_risk_score } = threatAssessment;
