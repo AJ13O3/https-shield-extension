@@ -373,9 +373,180 @@ function toggleDetails() {
     if (details.style.display === 'none') {
         details.style.display = 'block';
         button.textContent = 'Hide Detailed Risks';
+        
+        // Format and display detailed risk information
+        if (window.riskAssessment && window.riskAssessment.threat_assessment) {
+            displayDetailedRisks(window.riskAssessment.threat_assessment);
+        }
     } else {
         details.style.display = 'none';
         button.textContent = 'View Detailed Risks';
+    }
+}
+
+function displayDetailedRisks(threatAssessment) {
+    const container = document.getElementById('detailedRiskInfo');
+    if (!container || !threatAssessment) return;
+    
+    const { full_responses = {}, individual_scores = {}, final_risk_score } = threatAssessment;
+    
+    let html = '<div class="risk-accordion">';
+    
+    // Overall Risk Summary
+    html += `
+        <div class="accordion-item">
+            <h4 class="accordion-header" onclick="toggleAccordion(this)">
+                <span class="accordion-icon">▼</span>
+                Overall Risk Assessment
+                <span class="risk-badge ${getRiskClass(final_risk_score)}">${final_risk_score?.toFixed(1) || 'N/A'}/100</span>
+            </h4>
+            <div class="accordion-content" style="display: block;">
+                <p><strong>Combined Risk Score:</strong> ${final_risk_score?.toFixed(2) || 'N/A'}/100</p>
+                <p><strong>Risk Level:</strong> ${window.riskAssessment?.riskLevel || 'Unknown'}</p>
+                <p><strong>Assessment Method:</strong> Threat-weighted aggregation</p>
+                <div class="individual-scores">
+                    <h5>Individual Service Scores:</h5>
+                    <ul>
+                        ${Object.entries(individual_scores).map(([service, score]) => 
+                            `<li><strong>${formatServiceName(service)}:</strong> ${typeof score === 'number' ? score.toFixed(2) : score}</li>`
+                        ).join('')}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // URLBERT Analysis
+    if (full_responses.urlbert) {
+        const urlbert = full_responses.urlbert;
+        html += `
+            <div class="accordion-item">
+                <h4 class="accordion-header" onclick="toggleAccordion(this)">
+                    <span class="accordion-icon">▶</span>
+                    AI URL Analysis (URLBERT)
+                    <span class="risk-badge ${urlbert.classification === 'malicious' ? 'critical' : 'low'}">${urlbert.classification || 'Unknown'}</span>
+                </h4>
+                <div class="accordion-content">
+                    <p><strong>Classification:</strong> ${urlbert.classification || 'Unknown'}</p>
+                    <p><strong>Confidence:</strong> ${urlbert.confidence ? (urlbert.confidence * 100).toFixed(1) + '%' : 'N/A'}</p>
+                    <p><strong>Model Score:</strong> ${urlbert.risk_score?.toFixed(2) || 'N/A'}/100</p>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Google Safe Browsing
+    if (full_responses.google_safebrowsing) {
+        const gsb = full_responses.google_safebrowsing;
+        const threats = gsb.threats || [];
+        html += `
+            <div class="accordion-item">
+                <h4 class="accordion-header" onclick="toggleAccordion(this)">
+                    <span class="accordion-icon">▶</span>
+                    Google Safe Browsing
+                    <span class="risk-badge ${threats.length > 0 ? 'critical' : 'low'}">${threats.length > 0 ? 'Threats Found' : 'Clear'}</span>
+                </h4>
+                <div class="accordion-content">
+                    ${threats.length > 0 ? `
+                        <div class="threat-list">
+                            <h5>Detected Threats:</h5>
+                            <ul>
+                                ${threats.map(threat => `
+                                    <li class="threat-item">
+                                        <strong>${threat.type || 'Unknown Threat'}</strong>
+                                        ${threat.platform ? `<br>Platform: ${threat.platform}` : ''}
+                                        ${threat.threatEntryType ? `<br>Entry Type: ${threat.threatEntryType}` : ''}
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        </div>
+                    ` : '<p class="all-clear">✅ No threats detected by Google Safe Browsing</p>'}
+                </div>
+            </div>
+        `;
+    }
+    
+    // VirusTotal
+    if (full_responses.virustotal) {
+        const vt = full_responses.virustotal;
+        const fullResponse = vt.full_response || {};
+        const positives = fullResponse.positives || 0;
+        const total = fullResponse.total || 0;
+        html += `
+            <div class="accordion-item">
+                <h4 class="accordion-header" onclick="toggleAccordion(this)">
+                    <span class="accordion-icon">▶</span>
+                    VirusTotal Security Scan
+                    <span class="risk-badge ${positives > 0 ? 'high' : 'low'}">${positives}/${total} detections</span>
+                </h4>
+                <div class="accordion-content">
+                    <p><strong>Scan Date:</strong> ${fullResponse.scan_date || 'N/A'}</p>
+                    <p><strong>Detections:</strong> ${positives} out of ${total} engines</p>
+                    <p><strong>Detection Ratio:</strong> ${vt.detection_ratio ? (vt.detection_ratio * 100).toFixed(1) + '%' : '0%'}</p>
+                    ${fullResponse.permalink ? `<p><a href="${fullResponse.permalink}" target="_blank" rel="noopener">View full report →</a></p>` : ''}
+                </div>
+            </div>
+        `;
+    }
+    
+    // WHOIS Domain Information
+    if (full_responses.whois) {
+        const whois = full_responses.whois;
+        html += `
+            <div class="accordion-item">
+                <h4 class="accordion-header" onclick="toggleAccordion(this)">
+                    <span class="accordion-icon">▶</span>
+                    Domain Information (WHOIS)
+                    <span class="risk-badge medium">Score: ${(whois.risk_score * 100).toFixed(0)}/100</span>
+                </h4>
+                <div class="accordion-content">
+                    <p><strong>Domain Age:</strong> ${whois.domain_age_days ? whois.domain_age_days + ' days' : 'Unknown'}</p>
+                    <p><strong>Registrar:</strong> ${whois.registrar || 'Unknown'}</p>
+                    <p><strong>Creation Date:</strong> ${whois.creation_date || 'Unknown'}</p>
+                    <p><strong>Expiration Date:</strong> ${whois.expiration_date || 'Unknown'}</p>
+                    <p><strong>Privacy Protected:</strong> ${whois.is_privacy_protected ? 'Yes' : 'No'}</p>
+                    <p><strong>Risk Signals:</strong></p>
+                    <ul>
+                        ${whois.domain_age_days < 30 ? '<li>⚠️ Very new domain (less than 30 days old)</li>' : ''}
+                        ${whois.is_privacy_protected ? '<li>⚠️ WHOIS privacy enabled</li>' : ''}
+                        ${whois.risk_score > 0.7 ? '<li>⚠️ High risk domain characteristics</li>' : ''}
+                    </ul>
+                </div>
+            </div>
+        `;
+    }
+    
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function formatServiceName(service) {
+    const names = {
+        'urlbert': 'URLBERT AI',
+        'google_safebrowsing': 'Google Safe Browsing',
+        'virustotal': 'VirusTotal',
+        'whois': 'WHOIS Domain Info'
+    };
+    return names[service] || service;
+}
+
+function getRiskClass(score) {
+    if (score >= 80) return 'critical';
+    if (score >= 60) return 'high';
+    if (score >= 40) return 'medium';
+    return 'low';
+}
+
+function toggleAccordion(header) {
+    const content = header.nextElementSibling;
+    const icon = header.querySelector('.accordion-icon');
+    
+    if (content.style.display === 'none' || !content.style.display) {
+        content.style.display = 'block';
+        icon.textContent = '▼';
+    } else {
+        content.style.display = 'none';
+        icon.textContent = '▶';
     }
 }
 
