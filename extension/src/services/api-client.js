@@ -20,11 +20,19 @@ class HTTPSShieldAPIClient {
 
     async initialize() {
         try {
-            // Load API configuration from storage
+            // Load API key from storage (stored directly, not in apiConfig)
+            const stored = await chrome.storage.local.get(['apiKey']);
+            if (stored.apiKey) {
+                this.apiKey = stored.apiKey;
+                console.log('API key loaded successfully');
+            } else {
+                console.warn('No API key found in storage');
+            }
+            
+            // Also check for any custom API config
             const config = await chrome.storage.sync.get(['apiConfig']);
-            if (config.apiConfig) {
-                this.apiBaseUrl = config.apiConfig.baseUrl || this.apiBaseUrl;
-                this.apiKey = config.apiConfig.apiKey;
+            if (config.apiConfig && config.apiConfig.baseUrl) {
+                this.apiBaseUrl = config.apiConfig.baseUrl;
             }
         } catch (error) {
             console.warn('Failed to load API configuration:', error);
@@ -43,6 +51,11 @@ class HTTPSShieldAPIClient {
         if (!this.apiKey) {
             console.log('API key not loaded, reinitializing...');
             await this.initialize();
+            
+            // If still no API key after reinitialization, throw error
+            if (!this.apiKey) {
+                throw new Error('API key not configured. Please configure your API key.');
+            }
         }
 
         const requestData = {
@@ -191,13 +204,24 @@ class HTTPSShieldAPIClient {
      */
     async updateConfig(config) {
         try {
-            await chrome.storage.sync.set({ apiConfig: config });
+            // Store API key separately in local storage
+            if (config.apiKey) {
+                await chrome.storage.local.set({ 
+                    apiKey: config.apiKey,
+                    apiKeyConfiguredAt: new Date().toISOString()
+                });
+                this.apiKey = config.apiKey;
+            }
+            
+            // Store other config in sync storage
+            const apiConfig = { ...config };
+            delete apiConfig.apiKey; // Don't store API key in sync storage
+            if (Object.keys(apiConfig).length > 0) {
+                await chrome.storage.sync.set({ apiConfig });
+            }
             
             if (config.baseUrl) {
                 this.apiBaseUrl = config.baseUrl;
-            }
-            if (config.apiKey) {
-                this.apiKey = config.apiKey;
             }
             
             console.log('API configuration updated');

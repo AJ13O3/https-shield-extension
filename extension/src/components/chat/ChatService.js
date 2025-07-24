@@ -16,11 +16,19 @@ class ChatService {
    */
   async initialize() {
     try {
-      // Load API configuration from Chrome storage (same as risk assessment)
+      // Load API key from storage (stored directly in local storage)
+      const stored = await chrome.storage.local.get(['apiKey']);
+      if (stored.apiKey) {
+        this.apiKey = stored.apiKey;
+        console.log('Chat API key loaded successfully');
+      } else {
+        console.warn('No API key found in storage');
+      }
+      
+      // Also check for any custom API config
       const config = await chrome.storage.sync.get(['apiConfig']);
-      if (config.apiConfig) {
-        this.apiBaseUrl = config.apiConfig.baseUrl || this.apiBaseUrl;
-        this.apiKey = config.apiConfig.apiKey;
+      if (config.apiConfig && config.apiConfig.baseUrl) {
+        this.apiBaseUrl = config.apiConfig.baseUrl;
       }
     } catch (error) {
       console.warn('Failed to load API configuration:', error);
