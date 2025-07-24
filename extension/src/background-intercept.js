@@ -395,10 +395,18 @@ class HTTPSShieldBackground {
             // Update daily stats
             await this.updateDailyStats('warningsBlocked');
             
-            // Show warning popup after a delay
-            setTimeout(() => {
-                this.showWarningPopup(tabId);
-            }, 2000);
+            // Set badge to indicate HTTP site (without popup since user explicitly chose to proceed)
+            setTimeout(async () => {
+                try {
+                    await chrome.action.setBadgeText({ text: '!', tabId });
+                    await chrome.action.setBadgeBackgroundColor({ color: '#fbbc04', tabId });
+                } catch (error) {
+                    if (error.message.includes('No tab with id')) {
+                        console.log('Tab was closed before setting badge');
+                        this.activeHTTPSessions.delete(tabId);
+                    }
+                }
+            }, 1000);
             
             console.log('HTTP session created for tab:', tabId);
         } catch (error) {

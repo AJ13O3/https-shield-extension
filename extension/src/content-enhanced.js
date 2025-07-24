@@ -663,15 +663,18 @@ class HTTPSShieldContentEnhanced {
     }
 
     showCriticalWarningUI(results) {
-        this.createEnhancedWarningOverlay(results, 'critical');
+        // UI disabled - using pre-warning interception instead
+        console.log('Critical security issues detected:', results);
     }
 
     showWarningUI(results) {
-        this.createEnhancedWarningOverlay(results, 'warning');
+        // UI disabled - using pre-warning interception instead
+        console.log('Security warnings detected:', results);
     }
 
     showInfoUI(results) {
-        this.createEnhancedWarningOverlay(results, 'info');
+        // UI disabled - using pre-warning interception instead
+        console.log('Security info detected:', results);
     }
 
     createEnhancedWarningOverlay(results, severity) {
