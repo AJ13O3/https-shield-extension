@@ -1,16 +1,17 @@
-// HTTPS Shield Extension - Popup Script
-// Manages extension popup interface and user settings
+// HTTPS Shield Extension - Settings Dashboard
+// Manages extension settings and statistics display
 
-class HTTPSShieldPopup {
+class SettingsManager {
     constructor() {
-        this.currentTab = null;
-        this.settings = null;
+        this.settings = {
+            riskThreshold: 50
+        };
         this.stats = null;
         this.init();
     }
 
     async init() {
-        console.log('HTTPS Shield Popup initializing...');
+        console.log('HTTPS Shield Settings initializing...');
         
         // Wait for DOM to be ready
         if (document.readyState === 'loading') {
@@ -25,20 +26,9 @@ class HTTPSShieldPopup {
             // Show loading
             this.showLoading(true);
             
-            // Load current tab info
-            await this.loadCurrentTab();
-            
-            // Check for blocked site
-            const blockedSite = await this.checkForBlockedSite();
-            if (blockedSite) {
-                this.showBlockedSiteUI(blockedSite);
-                this.showLoading(false);
-                return;
-            }
-            
             // Load settings and stats
             await this.loadSettings();
-            await this.loadStats();
+            await this.loadDailyStats();
             
             // Set up UI
             this.setupEventListeners();
@@ -47,370 +37,358 @@ class HTTPSShieldPopup {
             // Hide loading
             this.showLoading(false);
             
-            console.log('HTTPS Shield Popup ready');
+            console.log('HTTPS Shield Settings ready');
         } catch (error) {
-            console.error('Error setting up popup:', error);
+            console.error('Error setting up settings:', error);
             this.showError('Failed to load extension data');
         }
     }
 
-    async loadCurrentTab() {
-        // Get current active tab
-        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-        this.currentTab = tabs[0];
-        
-        // Update URL display
-        const urlElement = document.getElementById('current-url');
-        if (this.currentTab?.url) {
-            urlElement.textContent = this.currentTab.url;
-            
-            // Get risk assessment for current URL
-            if (this.currentTab.url.startsWith('http://')) {
-                await this.analyzeCurrentPage();
-            } else {
-                this.updateRiskDisplay({ riskScore: 0, riskLevel: 'low' });
-            }
-        } else {
-            urlElement.textContent = 'No active tab';
-        }
-    }
-
-    async analyzeCurrentPage() {
-        try {
-            const response = await chrome.runtime.sendMessage({
-                type: 'ANALYZE_URL',
-                url: this.currentTab.url
-            });
-            
-            if (response.success) {
-                this.updateRiskDisplay(response.data);
-            }
-        } catch (error) {
-            console.error('Error analyzing current page:', error);
-        }
-    }
-
-    updateRiskDisplay(riskData) {
-        const scoreElement = document.getElementById('risk-score');
-        const levelElement = document.getElementById('risk-level');
-        
-        scoreElement.textContent = riskData.riskScore || '--';
-        levelElement.textContent = riskData.riskLevel || 'Unknown';
-        levelElement.className = `risk-level ${riskData.riskLevel || ''}`;
-    }
-
     async loadSettings() {
         try {
-            const response = await chrome.runtime.sendMessage({
-                type: 'GET_SETTINGS'
-            });
-            
-            if (response.success) {
-                this.settings = response.data;
-            } else {
-                // Use defaults
-                this.settings = {
-                    enabled: true,
-                    riskThreshold: 50,
-                    showNotifications: true
-                };
+            const stored = await chrome.storage.local.get(['settings']);
+            if (stored.settings) {
+                this.settings = stored.settings;
             }
         } catch (error) {
             console.error('Error loading settings:', error);
-            this.settings = {
-                enabled: true,
-                riskThreshold: 50,
-                showNotifications: true
-            };
         }
     }
 
-    async loadStats() {
+    async loadDailyStats() {
         try {
-            // Get events from storage for today's stats
+            // Get today's date
             const today = new Date().toDateString();
-            const result = await chrome.storage.local.get(['events']);
-            const events = result.events || [];
             
-            // Filter events for today
+            // Get daily stats from storage
+            const stored = await chrome.storage.local.get(['dailyStats']);
+            
+            if (stored.dailyStats && stored.dailyStats.date === today) {
+                this.stats = stored.dailyStats;
+            } else {
+                // Initialize new daily stats
+                this.stats = {
+                    date: today,
+                    sitesScanned: 0,
+                    warningsBlocked: 0,
+                    httpsUpgrades: 0
+                };
+            }
+            
+            // Also get recent events to calculate real-time stats
+            const eventsResult = await chrome.storage.local.get(['events']);
+            const events = eventsResult.events || [];
+            
+            // Calculate today's stats from events
             const todayEvents = events.filter(event => 
                 new Date(event.timestamp).toDateString() === today
             );
             
-            // Calculate stats
             this.stats = {
-                sitesVisited: new Set(todayEvents
-                    .filter(e => e.type === 'http_site_visited')
+                date: today,
+                sitesScanned: new Set(todayEvents
+                    .filter(e => e.type === 'site_analyzed')
                     .map(e => e.url)).size,
-                warningsShown: todayEvents
-                    .filter(e => e.type === 'http_site_visited').length,
-                httpsRedirects: todayEvents
-                    .filter(e => e.type === 'user_action' && e.action === 'find_https_version').length
+                warningsBlocked: todayEvents
+                    .filter(e => e.type === 'warning_shown').length,
+                httpsUpgrades: todayEvents
+                    .filter(e => e.type === 'https_upgrade').length
             };
+            
+            // Save updated stats
+            await chrome.storage.local.set({ dailyStats: this.stats });
+            
         } catch (error) {
-            console.error('Error loading stats:', error);
+            console.error('Error loading daily stats:', error);
             this.stats = {
-                sitesVisited: 0,
-                warningsShown: 0,
-                httpsRedirects: 0
+                sitesScanned: 0,
+                warningsBlocked: 0,
+                httpsUpgrades: 0
             };
         }
     }
 
     setupEventListeners() {
-        // Extension enabled toggle
-        const enabledToggle = document.getElementById('extension-enabled');
-        enabledToggle.checked = this.settings.enabled;
-        enabledToggle.addEventListener('change', (e) => {
-            this.updateSetting('enabled', e.target.checked);
-        });
-
-        // Notifications toggle
-        const notificationsToggle = document.getElementById('notifications-enabled');
-        notificationsToggle.checked = this.settings.showNotifications;
-        notificationsToggle.addEventListener('change', (e) => {
-            this.updateSetting('showNotifications', e.target.checked);
-        });
-
         // Risk threshold slider
-        const riskSlider = document.getElementById('risk-threshold');
+        const slider = document.getElementById('risk-threshold');
         const thresholdValue = document.getElementById('threshold-value');
-        riskSlider.value = this.settings.riskThreshold;
+        
+        slider.value = this.settings.riskThreshold;
         thresholdValue.textContent = this.settings.riskThreshold;
         
-        riskSlider.addEventListener('input', (e) => {
+        slider.addEventListener('input', (e) => {
             const value = parseInt(e.target.value);
             thresholdValue.textContent = value;
-            this.updateSetting('riskThreshold', value);
+            this.updateThreshold(value);
         });
 
-        // View history button
+        // Quick links
         document.getElementById('view-history').addEventListener('click', () => {
-            this.viewHistory();
+            this.handleQuickLink('history');
         });
 
-        // Clear data button
-        document.getElementById('clear-data').addEventListener('click', () => {
-            this.clearData();
+        document.getElementById('security-guide').addEventListener('click', () => {
+            this.handleQuickLink('guide');
+        });
+
+        document.getElementById('advanced-settings').addEventListener('click', () => {
+            this.handleQuickLink('settings');
+        });
+
+        document.getElementById('help-support').addEventListener('click', () => {
+            this.handleQuickLink('support');
         });
     }
 
     updateUI() {
         // Update stats display
-        document.getElementById('sites-visited').textContent = this.stats.sitesVisited;
-        document.getElementById('warnings-shown').textContent = this.stats.warningsShown;
-        document.getElementById('https-redirects').textContent = this.stats.httpsRedirects;
+        document.getElementById('sites-scanned').textContent = this.stats.sitesScanned || 0;
+        document.getElementById('warnings-blocked').textContent = this.stats.warningsBlocked || 0;
+        document.getElementById('https-upgrades').textContent = this.stats.httpsUpgrades || 0;
+        
+        // Update threshold display
+        const thresholdValue = document.getElementById('threshold-value');
+        thresholdValue.textContent = this.settings.riskThreshold;
     }
 
-    async updateSetting(key, value) {
+    async updateThreshold(value) {
+        this.settings.riskThreshold = value;
+        await this.saveSettings();
+        
+        // Notify background script
+        chrome.runtime.sendMessage({
+            type: 'UPDATE_SETTINGS',
+            settings: this.settings
+        });
+    }
+
+    async saveSettings() {
         try {
-            this.settings[key] = value;
-            
-            const response = await chrome.runtime.sendMessage({
-                type: 'UPDATE_SETTINGS',
-                settings: this.settings
-            });
-            
-            if (!response.success) {
-                console.error('Failed to update settings');
-            }
+            await chrome.storage.local.set({ settings: this.settings });
         } catch (error) {
-            console.error('Error updating setting:', error);
+            console.error('Error saving settings:', error);
         }
     }
 
-    async viewHistory() {
-        try {
-            // Get all events
-            const result = await chrome.storage.local.get(['events']);
-            const events = result.events || [];
-            
-            // Create a simple history view
-            const historyData = events
-                .filter(e => e.type === 'http_site_visited')
-                .slice(-10) // Last 10 events
-                .map(e => ({
-                    url: e.url,
-                    timestamp: new Date(e.timestamp).toLocaleString(),
-                    riskScore: e.riskScore
-                }));
-            
-            // For now, just log to console (in Week 3 we'll create a proper history page)
-            console.table(historyData);
-            alert(`Recent history (${historyData.length} entries) logged to console`);
-            
-        } catch (error) {
-            console.error('Error viewing history:', error);
-            alert('Error loading history');
+    handleQuickLink(action) {
+        switch (action) {
+            case 'history':
+                // Open history page
+                chrome.tabs.create({
+                    url: chrome.runtime.getURL('src/pages/history.html')
+                });
+                break;
+                
+            case 'guide':
+                // Open security guide
+                chrome.tabs.create({
+                    url: 'https://www.google.com/chrome/security/'
+                });
+                break;
+                
+            case 'settings':
+                // Open advanced settings page
+                chrome.tabs.create({
+                    url: chrome.runtime.getURL('src/pages/settings.html')
+                });
+                break;
+                
+            case 'support':
+                // Open help/support page
+                chrome.tabs.create({
+                    url: 'https://github.com/your-repo/https-shield-extension/issues'
+                });
+                break;
         }
-    }
-
-    async clearData() {
-        if (confirm('Clear all stored data? This action cannot be undone.')) {
-            try {
-                await chrome.storage.local.clear();
-                
-                // Reset stats
-                this.stats = {
-                    sitesVisited: 0,
-                    warningsShown: 0,
-                    httpsRedirects: 0
-                };
-                
-                this.updateUI();
-                alert('Data cleared successfully');
-                
-            } catch (error) {
-                console.error('Error clearing data:', error);
-                alert('Error clearing data');
-            }
-        }
+        
+        // Close popup after opening link
+        window.close();
     }
 
     showLoading(show) {
         const loadingElement = document.getElementById('loading');
-        loadingElement.style.display = show ? 'flex' : 'none';
-    }
-
-    showError(message) {
-        // Simple error display - in production we'd have a proper error UI
-        console.error(message);
-        alert(`Error: ${message}`);
-    }
-
-    async checkForBlockedSite() {
-        try {
-            // Get blocked site info for current tab
-            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!tabs[0]) return null;
-            
-            const tabId = tabs[0].id;
-            const result = await chrome.storage.session.get([`blocked_${tabId}`]);
-            const blockedInfo = result[`blocked_${tabId}`];
-            
-            // Check if this is recent (within last 5 minutes)
-            if (blockedInfo && (Date.now() - blockedInfo.timestamp < 5 * 60 * 1000)) {
-                return blockedInfo;
-            }
-            
-            return null;
-        } catch (error) {
-            console.error('Error checking for blocked site:', error);
-            return null;
+        if (loadingElement) {
+            loadingElement.style.display = show ? 'flex' : 'none';
         }
     }
 
-    showBlockedSiteUI(blockedSite) {
-        // Replace popup content with blocked site info
-        document.body.innerHTML = `
-            <div class="blocked-site-container">
-                <div class="header">
-                    <h2>🛡️ HTTPS Shield</h2>
-                </div>
-                <div class="blocked-warning">
-                    <div class="warning-icon">⚠️</div>
-                    <h3>HTTP Site Blocked</h3>
-                    <p class="blocked-url">${blockedSite.url}</p>
-                    <p class="warning-text">Chrome's HTTPS-only mode blocked this insecure connection.</p>
-                </div>
-                <div class="actions">
-                    <button id="analyze-risk" class="primary-btn">
-                        View Risk Assessment
-                    </button>
-                    <button id="close-popup" class="secondary-btn">
-                        Close
-                    </button>
-                </div>
-            </div>
-            <style>
-                body {
-                    width: 350px;
-                    margin: 0;
-                    font-family: system-ui, -apple-system, sans-serif;
-                }
-                .blocked-site-container {
-                    padding: 20px;
-                }
-                .header h2 {
-                    margin: 0 0 20px 0;
-                    font-size: 20px;
-                    color: #333;
-                }
-                .blocked-warning {
-                    background: #fff3e0;
-                    border: 1px solid #ff9800;
-                    border-radius: 8px;
-                    padding: 20px;
-                    text-align: center;
-                    margin-bottom: 20px;
-                }
-                .warning-icon {
-                    font-size: 48px;
-                    margin-bottom: 10px;
-                }
-                .blocked-warning h3 {
-                    margin: 0 0 10px 0;
-                    color: #e65100;
-                }
-                .blocked-url {
-                    font-family: monospace;
-                    font-size: 12px;
-                    word-break: break-all;
-                    color: #666;
-                    margin: 10px 0;
-                }
-                .warning-text {
-                    font-size: 14px;
-                    color: #666;
-                    margin: 10px 0 0 0;
-                }
-                .actions {
-                    display: flex;
-                    gap: 10px;
-                }
-                .primary-btn, .secondary-btn {
-                    flex: 1;
-                    padding: 10px;
-                    border: none;
-                    border-radius: 4px;
-                    font-size: 14px;
-                    cursor: pointer;
-                    transition: opacity 0.2s;
-                }
-                .primary-btn {
-                    background: #1976d2;
-                    color: white;
-                }
-                .primary-btn:hover {
-                    opacity: 0.9;
-                }
-                .secondary-btn {
-                    background: #f5f5f5;
-                    color: #333;
-                }
-                .secondary-btn:hover {
-                    background: #e0e0e0;
-                }
-            </style>
-        `;
-        
-        // Add event listeners
-        document.getElementById('analyze-risk').addEventListener('click', () => {
-            chrome.runtime.sendMessage({
-                action: 'openRiskAssessment',
-                url: blockedSite.url
-            });
-            window.close();
-        });
-        
-        document.getElementById('close-popup').addEventListener('click', () => {
-            window.close();
-        });
-        
-        // Clear the badge
-        chrome.action.setBadgeText({ text: '' });
+    showError(message) {
+        console.error(message);
+        // Could show a toast notification in the future
     }
 }
 
-// Initialize popup when DOM is ready
-new HTTPSShieldPopup();
+// Check if this popup is being shown as a warning notification
+async function checkWarningMode() {
+    try {
+        // Check for active HTTP session
+        const response = await chrome.runtime.sendMessage({
+            action: 'getActiveHTTPSession'
+        });
+        
+        if (response && response.session) {
+            // Show warning popup instead
+            showWarningPopup(response.session);
+            return true;
+        }
+    } catch (error) {
+        console.error('Error checking warning mode:', error);
+    }
+    return false;
+}
+
+// Show warning popup for active HTTP session
+function showWarningPopup(session) {
+    // Replace entire popup content with warning UI
+    document.body.innerHTML = `
+        <div class="popup-container popup-warning">
+            <header class="popup-header">
+                <div class="header-content">
+                    <span class="header-icon">⚠️</span>
+                    <h1 class="header-title">HTTPS Shield - Active Warning</h1>
+                </div>
+            </header>
+
+            <section class="popup-card">
+                <h3 class="card-title">You're on an Insecure Site</h3>
+                <div class="risk-summary">
+                    <div class="site-url">${session.url}</div>
+                    <div class="risk-display">
+                        <div class="risk-info">
+                            <span class="risk-label">Risk Level:</span>
+                            <span class="risk-value ${session.riskLevel.toLowerCase()}">${session.riskLevel} (${session.riskScore}/100)</span>
+                        </div>
+                        <div class="risk-progress">
+                            <div class="risk-progress-fill ${session.riskLevel.toLowerCase()}" style="width: ${session.riskScore}%"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="active-risks">
+                        <h4 class="active-risks-title">
+                            <span>⚠️</span>
+                            <span>Active Risks:</span>
+                        </h4>
+                        <ul class="risks-list">
+                            <li>Unencrypted connection</li>
+                            <li>Data visible to attackers</li>
+                            <li>No identity verification</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="session-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Time on site:</span>
+                            <span class="stat-value" id="session-time">0m 0s</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Data sent:</span>
+                            <span class="stat-value" id="data-sent">~0 KB</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Forms detected:</span>
+                            <span class="stat-value" id="forms-detected">0</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="action-buttons">
+                <button class="btn btn-primary" id="view-analysis">
+                    <span>🛡️</span>
+                    <span>View Full Analysis</span>
+                </button>
+                <button class="btn btn-secondary" id="go-back">
+                    <span>↩️</span>
+                    <span>Go Back</span>
+                </button>
+            </div>
+        </div>
+    `;
+    
+    // Load styles
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'styles.css';
+    document.head.appendChild(link);
+    
+    // Set up event listeners
+    document.getElementById('view-analysis').addEventListener('click', () => {
+        chrome.tabs.create({
+            url: chrome.runtime.getURL(`src/pages/risk-assessment.html?target=${encodeURIComponent(session.url)}`)
+        });
+        window.close();
+    });
+    
+    document.getElementById('go-back').addEventListener('click', () => {
+        chrome.tabs.update({ url: 'chrome://newtab/' });
+        window.close();
+    });
+    
+    // Start session tracking
+    const tracker = new HTTPSessionTracker(session);
+    tracker.startTracking();
+}
+
+// HTTP Session Tracker for warning popup
+class HTTPSessionTracker {
+    constructor(session) {
+        this.session = session;
+        this.updateInterval = null;
+    }
+
+    startTracking() {
+        // Initial update
+        this.updateDisplay();
+        
+        // Update every second
+        this.updateInterval = setInterval(() => {
+            this.updateDisplay();
+        }, 1000);
+        
+        // Clean up on window close
+        window.addEventListener('beforeunload', () => {
+            if (this.updateInterval) {
+                clearInterval(this.updateInterval);
+            }
+        });
+    }
+
+    updateDisplay() {
+        // Update session time
+        const elapsed = Date.now() - this.session.startTime;
+        const minutes = Math.floor(elapsed / 60000);
+        const seconds = Math.floor((elapsed % 60000) / 1000);
+        
+        const timeElement = document.getElementById('session-time');
+        if (timeElement) {
+            timeElement.textContent = `${minutes}m ${seconds}s`;
+        }
+        
+        // Update data sent (mock for now)
+        const dataElement = document.getElementById('data-sent');
+        if (dataElement) {
+            const dataSent = Math.floor(elapsed / 1000) * 0.5; // Mock calculation
+            dataElement.textContent = `~${dataSent.toFixed(1)} KB`;
+        }
+        
+        // Update forms detected
+        const formsElement = document.getElementById('forms-detected');
+        if (formsElement && this.session.formsDetected) {
+            formsElement.textContent = this.session.formsDetected.length;
+        }
+    }
+}
+
+// Initialize appropriate popup mode
+async function initializePopup() {
+    // Check if we should show warning popup
+    const isWarning = await checkWarningMode();
+    
+    if (!isWarning) {
+        // Show normal settings dashboard
+        new SettingsManager();
+    }
+}
+
+// Start initialization
+initializePopup();

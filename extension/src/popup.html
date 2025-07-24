@@ -2,78 +2,75 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>HTTPS Shield</title>
+    <title>HTTPS Shield Settings</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="popup-container">
+    <div class="popup-container popup-settings">
         <header class="popup-header">
-            <div class="logo">🛡️</div>
-            <h1>HTTPS Shield</h1>
-            <div class="version">v0.1.0</div>
+            <div class="header-content">
+                <span class="header-icon">🛡️</span>
+                <h1 class="header-title">HTTPS Shield Settings</h1>
+            </div>
         </header>
 
-        <section class="current-status">
-            <h3>Current Page</h3>
-            <div id="current-url" class="url-display">Loading...</div>
-            <div id="current-risk" class="risk-status">
-                <span class="risk-score" id="risk-score">--</span>
-                <span class="risk-level" id="risk-level">Unknown</span>
+        <section class="popup-card">
+            <h3 class="card-title">Protection Settings</h3>
+            <div class="threshold-setting">
+                <h4>Risk Alert Threshold</h4>
+                <div class="slider-container">
+                    <input type="range" id="risk-threshold" min="0" max="100" value="50" class="risk-slider">
+                    <div class="slider-labels">
+                        <span>Low</span>
+                        <span class="threshold-value" id="threshold-value">50</span>
+                        <span>High</span>
+                    </div>
+                </div>
+                <p class="threshold-description">
+                    Alert me when sites exceed this risk level
+                </p>
             </div>
         </section>
 
-        <section class="quick-stats">
-            <h3>Today's Activity</h3>
+        <section class="popup-card">
+            <h3 class="card-title">Today's Protection Summary</h3>
             <div class="stats-grid">
-                <div class="stat-item">
-                    <span class="stat-number" id="sites-visited">0</span>
-                    <span class="stat-label">Sites Visited</span>
+                <div class="stat-box">
+                    <span class="stat-number" id="sites-scanned">0</span>
+                    <span class="stat-label">Sites<br>Scanned</span>
                 </div>
-                <div class="stat-item">
-                    <span class="stat-number" id="warnings-shown">0</span>
-                    <span class="stat-label">Warnings Shown</span>
+                <div class="stat-box">
+                    <span class="stat-number" id="warnings-blocked">0</span>
+                    <span class="stat-label">Warnings<br>Blocked</span>
                 </div>
-                <div class="stat-item">
-                    <span class="stat-number" id="https-redirects">0</span>
-                    <span class="stat-label">HTTPS Redirects</span>
-                </div>
-            </div>
-        </section>
-
-        <section class="controls">
-            <div class="control-item">
-                <label class="toggle-switch">
-                    <input type="checkbox" id="extension-enabled" checked>
-                    <span class="slider"></span>
-                </label>
-                <span class="control-label">Extension Enabled</span>
-            </div>
-            
-            <div class="control-item">
-                <label class="toggle-switch">
-                    <input type="checkbox" id="notifications-enabled" checked>
-                    <span class="slider"></span>
-                </label>
-                <span class="control-label">Show Notifications</span>
-            </div>
-        </section>
-
-        <section class="risk-settings">
-            <h3>Risk Threshold</h3>
-            <div class="slider-container">
-                <input type="range" id="risk-threshold" min="0" max="100" value="50" class="risk-slider">
-                <div class="slider-labels">
-                    <span>Low</span>
-                    <span id="threshold-value">50</span>
-                    <span>High</span>
+                <div class="stat-box">
+                    <span class="stat-number" id="https-upgrades">0</span>
+                    <span class="stat-label">HTTPS<br>Upgrades</span>
                 </div>
             </div>
         </section>
 
-        <footer class="popup-footer">
-            <button id="view-history" class="btn btn-secondary">View History</button>
-            <button id="clear-data" class="btn btn-secondary">Clear Data</button>
-        </footer>
+        <section class="popup-card">
+            <h3 class="card-title">Quick Links</h3>
+            <div class="quick-links">
+                <button class="link-button" id="view-history">
+                    <span class="link-icon">📊</span>
+                    <span>View History</span>
+                </button>
+                <button class="link-button" id="security-guide">
+                    <span class="link-icon">📚</span>
+                    <span>Security Guide</span>
+                </button>
+                <button class="link-button" id="advanced-settings">
+                    <span class="link-icon">🔧</span>
+                    <span>Advanced Settings</span>
+                </button>
+                <button class="link-button" id="help-support">
+                    <span class="link-icon">❓</span>
+                    <span>Help & Support</span>
+                </button>
+            </div>
+        </section>
 
         <div id="loading" class="loading-overlay" style="display: none;">
             <div class="spinner"></div>
