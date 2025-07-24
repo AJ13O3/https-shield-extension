@@ -5,6 +5,7 @@ class HTTPSShieldBackground {
     constructor() {
         this.bypassedDomains = new Map(); // Track temporarily allowed domains
         this.pendingNavigations = new Map(); // Track pending HTTP navigations
+        this.activeHTTPSessions = new Map(); // Track active HTTP sessions for warning popup
         this.setupEventListeners();
         this.initializeExtension();
     }
@@ -40,10 +41,16 @@ class HTTPSShieldBackground {
             return true; // Keep message channel open
         });
 
-        // Clean up bypass list when tabs are closed
+        // Clean up bypass list and sessions when tabs are closed
         chrome.tabs.onRemoved.addListener((tabId) => {
             // Clean up any bypasses associated with this tab
             this.cleanupTabBypasses(tabId);
+            // Clean up HTTP session
+            if (this.activeHTTPSessions.has(tabId)) {
+                this.activeHTTPSessions.delete(tabId);
+                // Clear badge
+                chrome.action.setBadgeText({ text: '', tabId });
+            }
         });
 
         // Periodically clean up old bypass rules
@@ -195,6 +202,24 @@ class HTTPSShieldBackground {
                     sendResponse({ success: true });
                     break;
 
+                case 'getActiveHTTPSession':
+                    // Get active HTTP session for the current tab
+                    const tabId = sender.tab?.id;
+                    if (tabId && this.activeHTTPSessions.has(tabId)) {
+                        sendResponse({ session: this.activeHTTPSessions.get(tabId) });
+                    } else {
+                        sendResponse({ session: null });
+                    }
+                    break;
+
+                case 'UPDATE_SETTINGS':
+                    // Update settings from popup
+                    if (message.settings) {
+                        await chrome.storage.local.set({ settings: message.settings });
+                        sendResponse({ success: true });
+                    }
+                    break;
+
                 default:
                     console.warn('Unknown message type:', message.type || message.action);
                     sendResponse({ success: false, error: 'Unknown message type' });
@@ -245,6 +270,9 @@ class HTTPSShieldBackground {
                 tabId,
                 timestamp: Date.now()
             });
+            
+            // Create HTTP session for tracking
+            await this.createHTTPSession(tabId, url);
             
             // Remove bypass after 30 minutes
             setTimeout(async () => {
@@ -306,6 +334,87 @@ class HTTPSShieldBackground {
         } catch (error) {
             console.error('Error verifying bypass rule:', error);
             return false;
+        }
+    }
+
+    async createHTTPSession(tabId, url) {
+        try {
+            // Get risk assessment data
+            const riskData = await this.analyzeURL(url);
+            
+            // Create session object
+            const session = {
+                tabId,
+                url,
+                startTime: Date.now(),
+                riskScore: riskData.riskScore,
+                riskLevel: riskData.riskLevel,
+                dataSent: 0,
+                formsDetected: [],
+                threatAssessment: riskData.threat_assessment || {}
+            };
+            
+            // Store session
+            this.activeHTTPSessions.set(tabId, session);
+            
+            // Update daily stats
+            await this.updateDailyStats('warningsBlocked');
+            
+            // Show warning popup after a delay
+            setTimeout(() => {
+                this.showWarningPopup(tabId);
+            }, 2000);
+            
+            console.log('HTTP session created for tab:', tabId);
+        } catch (error) {
+            console.error('Error creating HTTP session:', error);
+        }
+    }
+    
+    async showWarningPopup(tabId) {
+        try {
+            // Set badge to indicate warning
+            await chrome.action.setBadgeText({ text: '!', tabId });
+            await chrome.action.setBadgeBackgroundColor({ color: '#fbbc04', tabId });
+            
+            // Open popup programmatically if possible
+            await chrome.action.openPopup();
+        } catch (error) {
+            // Fallback: just set the badge
+            console.log('Cannot open popup programmatically, badge set');
+        }
+    }
+    
+    async updateDailyStats(statType) {
+        try {
+            const today = new Date().toDateString();
+            const stored = await chrome.storage.local.get(['dailyStats']);
+            
+            let stats = stored.dailyStats || {
+                date: today,
+                sitesScanned: 0,
+                warningsBlocked: 0,
+                httpsUpgrades: 0
+            };
+            
+            // Reset if new day
+            if (stats.date !== today) {
+                stats = {
+                    date: today,
+                    sitesScanned: 0,
+                    warningsBlocked: 0,
+                    httpsUpgrades: 0
+                };
+            }
+            
+            // Increment the specified stat
+            if (statType in stats) {
+                stats[statType]++;
+            }
+            
+            await chrome.storage.local.set({ dailyStats: stats });
+        } catch (error) {
+            console.error('Error updating daily stats:', error);
         }
     }
 
