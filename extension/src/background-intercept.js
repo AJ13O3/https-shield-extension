@@ -48,8 +48,12 @@ class HTTPSShieldBackground {
             // Clean up HTTP session
             if (this.activeHTTPSessions.has(tabId)) {
                 this.activeHTTPSessions.delete(tabId);
-                // Clear badge
-                chrome.action.setBadgeText({ text: '', tabId });
+                // Clear badge (ignore errors since tab is being closed)
+                try {
+                    chrome.action.setBadgeText({ text: '', tabId });
+                } catch (error) {
+                    // Tab already closed, ignore badge clear error
+                }
             }
         });
 
@@ -95,7 +99,12 @@ class HTTPSShieldBackground {
                         await chrome.tabs.update(details.tabId, { url: riskAssessmentUrl });
                         console.log('Successfully redirected to risk assessment page');
                     } catch (error) {
-                        console.error('Failed to redirect immediately:', error);
+                        if (error.message.includes('No tab with id')) {
+                            console.log('Tab was closed during redirect, cleaning up');
+                            this.pendingNavigations.delete(details.tabId);
+                        } else {
+                            console.error('Failed to redirect immediately:', error);
+                        }
                     }
                 } else {
                     console.log('Skipping local/private domain:', url.hostname);
@@ -113,12 +122,21 @@ class HTTPSShieldBackground {
                 if (pending && Date.now() - pending.timestamp < 3000) {
                     // Quickly redirect to our warning page
                     console.log('Chrome HTTPS-Only warning detected, redirecting to our page');
-                    chrome.tabs.update(tabId, {
-                        url: chrome.runtime.getURL(
-                            `/src/pages/risk-assessment.html?target=${encodeURIComponent(pending.url)}&intercepted=true`
-                        )
-                    });
-                    this.pendingNavigations.delete(tabId);
+                    try {
+                        await chrome.tabs.update(tabId, {
+                            url: chrome.runtime.getURL(
+                                `/src/pages/risk-assessment.html?target=${encodeURIComponent(pending.url)}&intercepted=true`
+                            )
+                        });
+                        this.pendingNavigations.delete(tabId);
+                    } catch (error) {
+                        if (error.message.includes('No tab with id')) {
+                            console.log('Tab was closed during HTTPS-only redirect, cleaning up');
+                            this.pendingNavigations.delete(tabId);
+                        } else {
+                            console.error('Failed to redirect from HTTPS-only warning:', error);
+                        }
+                    }
                 }
             }
             
@@ -175,9 +193,21 @@ class HTTPSShieldBackground {
 
                 case 'closeTab':
                     if (message.tabId) {
-                        chrome.tabs.remove(parseInt(message.tabId));
+                        try {
+                            await chrome.tabs.remove(parseInt(message.tabId));
+                            sendResponse({ success: true });
+                        } catch (error) {
+                            if (error.message.includes('No tab with id')) {
+                                console.log('Tab was already closed');
+                                sendResponse({ success: true }); // Still success since tab is gone
+                            } else {
+                                console.error('Error closing tab:', error);
+                                sendResponse({ success: false, error: error.message });
+                            }
+                        }
+                    } else {
+                        sendResponse({ success: false, error: 'No tabId provided' });
                     }
-                    sendResponse({ success: true });
                     break;
 
                 case 'navigateTab':
@@ -186,8 +216,13 @@ class HTTPSShieldBackground {
                             await chrome.tabs.update(parseInt(message.tabId), { url: message.url });
                             sendResponse({ success: true });
                         } catch (error) {
-                            console.error('Tab navigation error:', error);
-                            sendResponse({ success: false, error: error.message });
+                            if (error.message.includes('No tab with id')) {
+                                console.log('Tab was closed before navigation');
+                                sendResponse({ success: false, error: 'Tab was closed' });
+                            } else {
+                                console.error('Tab navigation error:', error);
+                                sendResponse({ success: false, error: error.message });
+                            }
                         }
                     } else {
                         sendResponse({ success: false, error: 'Missing tabId or url' });
@@ -380,8 +415,13 @@ class HTTPSShieldBackground {
             // Open popup programmatically if possible
             await chrome.action.openPopup();
         } catch (error) {
-            // Fallback: just set the badge
-            console.log('Cannot open popup programmatically, badge set');
+            if (error.message.includes('No tab with id')) {
+                console.log('Tab was closed before showing warning popup');
+                // Clean up the session since tab is gone
+                this.activeHTTPSessions.delete(tabId);
+            } else {
+                console.log('Cannot open popup programmatically:', error.message);
+            }
         }
     }
     
