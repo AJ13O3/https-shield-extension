@@ -133,7 +133,7 @@ def build_auto_prompt(risk_context):
         domain=risk_context.get('domain', 'Unknown'),
         protocol=risk_context.get('protocol', 'Unknown'),
         error_code=risk_context.get('errorCode', ''),
-        risk_level=f"{actual_risk_level}/100",
+        risk_level=actual_risk_level,
         risk_score=actual_risk_score,
         timestamp=risk_context.get('timestamp', 'Unknown'),
         detailed_threat_analysis=detailed_analysis
@@ -280,9 +280,18 @@ def extract_detailed_threat_analysis(risk_context):
     Returns:
         str: Formatted detailed threat analysis
     """
+    logger.info(f"extract_detailed_threat_analysis received context with keys: {list(risk_context.keys())}")
+    
     threat_assessment = risk_context.get('threat_assessment', {})
+    logger.info(f"threat_assessment keys: {list(threat_assessment.keys())}")
+    
     individual_scores = threat_assessment.get('individual_scores', {})
     full_responses = threat_assessment.get('full_responses', {})
+    
+    if not individual_scores and not full_responses:
+        logger.error("threat_assessment missing expected structure (individual_scores/full_responses)")
+        logger.error(f"threat_assessment content: {json.dumps(threat_assessment, indent=2, default=str)}")
+        logger.error(f"Full risk_context: {json.dumps(risk_context, indent=2, default=str)[:1000]}...")
     
     analysis_parts = []
     

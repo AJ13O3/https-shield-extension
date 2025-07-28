@@ -55,6 +55,7 @@ class ChatService {
       }
 
       console.log('ChatService: Sending message', { message, context });
+      console.log('ChatService: context.assessmentId =', context.assessmentId);
 
       const requestBody = {
         message: message,
@@ -71,6 +72,8 @@ class ChatService {
           timestamp: context.timestamp || new Date().toISOString()
         }
       };
+      
+      console.log('ChatService: requestBody.assessmentId =', requestBody.assessmentId);
 
       const fullEndpoint = `${this.apiBaseUrl}${this.chatEndpoint}`;
       const response = await fetch(fullEndpoint, {

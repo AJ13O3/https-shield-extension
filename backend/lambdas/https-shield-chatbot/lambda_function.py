@@ -39,15 +39,44 @@ def lambda_handler(event, context):
         
         # Retrieve full risk assessment data if assessment ID is provided
         if assessment_id:
+            logger.info(f"Attempting to retrieve risk assessment for ID: {assessment_id}")
+            logger.info(f"Assessment ID length: {len(assessment_id)}, first 16 chars: {assessment_id[:16]}")
             risk_assessment = get_risk_assessment(assessment_id)
             if risk_assessment:
                 # Use complete risk assessment data as context
                 risk_context = risk_assessment
-                logger.info(f"Retrieved risk assessment data for {assessment_id}")
+                logger.info(f"Successfully retrieved risk assessment data for {assessment_id}")
                 logger.info(f"Risk assessment keys: {list(risk_assessment.keys())}")
+                logger.info(f"Has threat_assessment: {'threat_assessment' in risk_assessment}")
+                if 'threat_assessment' in risk_assessment:
+                    ta_type = type(risk_assessment['threat_assessment'])
+                    logger.info(f"threat_assessment type: {ta_type}")
+                    if isinstance(risk_assessment['threat_assessment'], dict):
+                        logger.info(f"threat_assessment keys: {list(risk_assessment['threat_assessment'].keys())}")
                 logger.debug(f"Complete risk assessment: {json.dumps(risk_assessment, indent=2, default=str)}")
             else:
-                logger.warning(f"No risk assessment found for ID: {assessment_id}")
+                logger.error(f"FAILED to retrieve risk assessment for ID: {assessment_id}")
+                logger.error(f"Falling back to frontend context with keys: {list(risk_context.keys())}")
+                # Log what we have in the frontend context
+                logger.error(f"Frontend context domain: {risk_context.get('domain', 'NOT_FOUND')}")
+                logger.error(f"Frontend context protocol: {risk_context.get('protocol', 'NOT_FOUND')}")
+                logger.error(f"Frontend context url: {risk_context.get('url', 'NOT_FOUND')}")
+                logger.error(f"Frontend threat_assessment keys: {list(risk_context.get('threat_assessment', {}).keys())}")
+                
+                # Try to extract URL components if missing
+                if not risk_context.get('domain') or not risk_context.get('protocol'):
+                    url = risk_context.get('url', '')
+                    if url:
+                        try:
+                            from urllib.parse import urlparse
+                            parsed_url = urlparse(url)
+                            if not risk_context.get('domain'):
+                                risk_context['domain'] = parsed_url.netloc
+                            if not risk_context.get('protocol'):
+                                risk_context['protocol'] = parsed_url.scheme
+                            logger.info(f"Extracted domain: {risk_context['domain']}, protocol: {risk_context['protocol']} from URL")
+                        except Exception as e:
+                            logger.error(f"Failed to parse URL: {e}")
         
         # Handle auto-message generation for initial chatbot display
         if message.strip().lower() == 'auto' and risk_context:

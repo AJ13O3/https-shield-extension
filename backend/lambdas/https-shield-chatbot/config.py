@@ -16,8 +16,8 @@ Security Context:
 <domain>{domain}</domain>
 <protocol>{protocol}</protocol>
 <error_code>{error_code}</error_code>
-<risk_level>{risk_level}/100</risk_level>
-<risk_score>{risk_score}</risk_score>
+<risk_level>{risk_level}</risk_level>
+<risk_score>{risk_score}/100</risk_score>
 <timestamp>{timestamp}</timestamp>
 
 This detailed analysis includes:
@@ -87,8 +87,8 @@ Security Context:
 <domain>{domain}</domain>
 <protocol>{protocol}</protocol>
 <error_code>{error_code}</error_code>
-<risk_level>{risk_level}/100</risk_level>
-<risk_score>{risk_score}</risk_score>
+<risk_level>{risk_level}</risk_level>
+<risk_score>{risk_score}/100</risk_score>
 <timestamp>{timestamp}</timestamp>
 
 Consider the URL details, risk assessments, and any previous threat analysis from the security context and conversation history. 

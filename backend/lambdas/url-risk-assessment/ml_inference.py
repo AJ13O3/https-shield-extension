@@ -126,17 +126,24 @@ def calculate_final_risk_score(urlbert_score: float, safebrowsing_binary: float,
     """
     # If any critical threat detected, boost the score significantly
     threat_boost = 0.0
-    if safebrowsing_binary == 1:  # Google detected threats
+    if virustotal_ratio > 0:  # Any detection
+        if virustotal_ratio >= 0.5:  # Majority of engines flagged
+            threat_boost = 0.5
+        elif virustotal_ratio >= 0.1:  # Multiple engines flagged (10%+)
+            threat_boost = 0.4
+        elif virustotal_ratio >= 0.03:  # Few engines flagged (3%+)
+            threat_boost = 0.35
+        else:  # Single engine flagged
+            threat_boost = 0.25
+    elif safebrowsing_binary == 1:  # Google detected threats (only if VT didn't)
         threat_boost = 0.3
-    elif virustotal_ratio > 0.5:  # Majority of engines flagged
-        threat_boost = 0.2
     
     # Base weighted combination
     base_score = (
-        urlbert_score * 0.5 +      # URLBERT gets highest weight (AI analysis)
-        safebrowsing_binary * 0.25 + # Google Safe Browsing (binary)
-        virustotal_ratio * 0.15 +   # VirusTotal (continuous)
-        whois_heuristic * 0.1       # WHOIS (domain reputation)
+        virustotal_ratio * 0.35 +    # VirusTotal (equal weight with URLBERT)
+        urlbert_score * 0.35 +       # URLBERT (equal weight with VirusTotal)
+        safebrowsing_binary * 0.2 +  # Google Safe Browsing (binary)
+        whois_heuristic * 0.1        # WHOIS (domain reputation)
     )
     
     # Apply threat boost and cap at 1.0
@@ -199,9 +206,9 @@ def get_combined_threat_assessment(url: str, external_data: Dict[str, Any]) -> D
             'final_risk_score': final_risk_score * 100,  # Convert to 0-100 scale
             'individual_scores': {
                 'urlbert': urlbert_score * 100,  # Show original URLBERT score (0-100)
-                'google_safebrowsing': safebrowsing_score,
-                'virustotal': virustotal_score,
-                'whois': whois_score
+                'google_safebrowsing': safebrowsing_score * 100,
+                'virustotal': virustotal_score * 100,
+                'whois': whois_score * 100
             },
             'full_responses': {  # Preserve for LLM context
                 'urlbert': urlbert_result,

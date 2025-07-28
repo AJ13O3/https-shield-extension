@@ -194,19 +194,28 @@ def get_risk_assessment(assessment_id):
         return None
         
     try:
+        logger.info(f"Querying DynamoDB for assessment_id: {assessment_id}")
+        logger.info(f"Assessment ID type: {type(assessment_id)}, length: {len(assessment_id)}")
+        
         response = risk_assessments_table.get_item(
             Key={'assessment_id': assessment_id}
         )
         
         if 'Item' in response:
             assessment_data = response['Item']['assessment']
-            logger.info(f"Retrieved risk assessment for ID: {assessment_id}")
+            logger.info(f"Successfully retrieved risk assessment for ID: {assessment_id}")
+            logger.info(f"Retrieved assessment keys: {list(assessment_data.keys())}")
+            logger.info(f"Assessment has threat_assessment: {'threat_assessment' in assessment_data}")
+            if 'threat_assessment' in assessment_data:
+                threat_keys = list(assessment_data['threat_assessment'].keys()) if isinstance(assessment_data['threat_assessment'], dict) else 'Not a dict'
+                logger.info(f"threat_assessment keys: {threat_keys}")
             
             # Convert Decimal objects back to float/int for JSON serialization
             assessment_data = convert_decimals_to_numbers(assessment_data)
             return assessment_data
         else:
-            logger.warning(f"No risk assessment found for ID: {assessment_id}")
+            logger.error(f"No Item found in DynamoDB response for ID: {assessment_id}")
+            logger.error(f"DynamoDB response: {response}")
             return None
             
     except ClientError as e:

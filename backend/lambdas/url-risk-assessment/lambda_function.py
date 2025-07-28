@@ -127,6 +127,8 @@ def lambda_handler(event, context):
             # For test URLs, log that we're using cached data
             if is_test_url(url):
                 logger.info(f"Using cached result for test URL: {url}")
+            # Add cache key to cached result for frontend/chatbot use
+            cached_result['cacheKey'] = cache_key
             log_performance_metric(logger, 'total_request', (time.time() - start_time) * 1000, cache_hit=True)
             return success_response(cached_result)
         
@@ -139,6 +141,9 @@ def lambda_handler(event, context):
         assessment_start = time.time()
         assessment = perform_risk_assessment(url, error_code, user_agent)
         log_performance_metric(logger, 'risk_assessment', (time.time() - assessment_start) * 1000)
+        
+        # Add cache key to assessment for frontend/chatbot use
+        assessment['cacheKey'] = cache_key
         
         # Cache the result with appropriate TTL
         cache_write_start = time.time()
@@ -325,17 +330,6 @@ def cache_assessment(cache_key: str, assessment: Dict[str, Any], url: str) -> No
                 'assessment': assessment_for_cache,
                 'timestamp': assessment['timestamp'],
                 'ttl': ttl
-            }
-        )
-        
-        # Also store with assessmentId for chatbot retrieval
-        if 'assessmentId' in assessment:
-            table.put_item(
-                Item={
-                    'assessment_id': assessment['assessmentId'],
-                    'assessment': assessment_for_cache,
-                    'timestamp': assessment['timestamp'],
-                    'ttl': ttl
             }
         )
         

@@ -62,8 +62,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (e.target === this) closeModal();
     });
     
-    // Initialize chat widget after a short delay to ensure DOM is ready
-    setTimeout(initializeChatWidget, 1000);
+    // Don't initialize chat widget here - wait for risk analysis to complete
 });
 
 async function analyzeRisk() {
@@ -158,14 +157,20 @@ function displayRiskResults(riskData) {
     const sourceIndicator = riskData.source === 'mock' ? ' (Offline Mode)' : '';
     document.getElementById('riskValue').title = `Risk Level: ${riskLevel}${sourceIndicator}`;
     
-    // Generate unique assessment ID from timestamp and URL hash
-    const assessmentId = `assess_${Date.now()}_${btoa(targetUrl).slice(0, 8)}`;
+    // Use the cache key from the backend if available, otherwise use assessmentId or generate one
+    const assessmentId = riskData.cacheKey || riskData.assessmentId || `assess_${Date.now()}_${btoa(targetUrl).slice(0, 8)}`;
+    
+    console.log('Setting assessmentId:', assessmentId);
+    console.log('riskData.cacheKey:', riskData.cacheKey);
+    console.log('riskData.assessmentId:', riskData.assessmentId);
     
     // Store complete risk data globally for chat widget
     window.riskAssessment = {
         ...riskData,
         assessmentId: assessmentId
     };
+    
+    console.log('window.riskAssessment.assessmentId:', window.riskAssessment.assessmentId);
     
     // Update chat widget if initialized
     if (chatWidget) {
@@ -183,6 +188,9 @@ function displayRiskResults(riskData) {
             timestamp: riskData.timestamp || new Date().toISOString()
         };
     }
+    
+    // Initialize chat widget now that risk assessment is complete
+    setTimeout(initializeChatWidget, 500);
 }
 
 function formatThreatAssessment(threatData) {
@@ -520,7 +528,7 @@ function displayDetailedRisks(threatAssessment) {
                 <h4 class="accordion-header">
                     <span class="accordion-icon">▶</span>
                     Domain Information (WHOIS)
-                    <span class="risk-badge medium">Score: ${(whois.risk_score * 100).toFixed(0)}/100</span>
+                    <span class="risk-badge medium">Score: ${whois.risk_score.toFixed(0)}/100</span>
                 </h4>
                 <div class="accordion-content">
                     <p><strong>Domain Age:</strong> ${whois.domain_age_days ? whois.domain_age_days + ' days' : 'Unknown'}</p>
@@ -702,6 +710,9 @@ function initializeChatWidget() {
         }
         
         // Prepare risk context with complete data - NO FALLBACKS
+        console.log('initializeChatWidget - window.riskAssessment:', window.riskAssessment);
+        console.log('initializeChatWidget - assessmentId:', window.riskAssessment?.assessmentId);
+        
         const riskContext = {
             url: targetUrl,
             riskScore: window.riskAssessment?.riskScore,
@@ -716,6 +727,9 @@ function initializeChatWidget() {
             timestamp: window.riskAssessment?.timestamp || new Date().toISOString(),
             sessionId: `risk_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         };
+        
+        console.log('initializeChatWidget - riskContext:', riskContext);
+        console.log('initializeChatWidget - riskContext.assessmentId:', riskContext.assessmentId);
         
         // Initialize chat widget
         chatWidget = new ChatWidget(container, riskContext);
