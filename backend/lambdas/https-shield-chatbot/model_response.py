@@ -367,10 +367,11 @@ def extract_detailed_threat_analysis(risk_context):
     whois_data = full_responses.get('whois')
     if whois_data and whois_data is not None:
         whois_score = individual_scores.get('whois', 0)
+        raw_xml = whois_data.get('raw_xml', '')
         analysis_parts.append(f"""WHOIS Analysis:
 - Domain Risk Score: {whois_score:.1f}/100
-- Domain Information: Available
-- Assessment: Domain reputation analysis completed""")
+- Full WHOIS Response:
+{raw_xml}""")
     else:
         analysis_parts.append("""WHOIS Analysis:
 - Status: No domain information available

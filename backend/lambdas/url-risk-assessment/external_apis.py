@@ -270,7 +270,7 @@ def lookup_whois(domain: str) -> Dict[str, Any]:
                 data = _parse_whois_xml(raw_response)
                 if data:
                     logger.info(f"WHOIS response parsed successfully: {json.dumps(data, indent=2)}")
-                    return _process_whois_response(data)
+                    return _process_whois_response(data, raw_xml=raw_response)
                 else:
                     logger.error("Failed to parse WHOIS XML response")
                     return None
@@ -322,7 +322,7 @@ def _get_xml_text(root, tag: str) -> str:
     element = root.find(tag)
     return element.text if element is not None and element.text else ''
 
-def _process_whois_response(data: Dict[str, Any]) -> Dict[str, Any]:
+def _process_whois_response(data: Dict[str, Any], raw_xml: str = None) -> Dict[str, Any]:
     """Process WhoisXMLAPI response with heuristic scoring"""
     whois_record = data.get('WhoisRecord', {})
     
@@ -354,6 +354,7 @@ def _process_whois_response(data: Dict[str, Any]) -> Dict[str, Any]:
     result = {
         'extracted_score': heuristic_score,    # For aggregation (0.0-1.0 heuristic)
         'full_response': data,                 # Preserve full response for LLM context
+        'raw_xml': raw_xml,                    # ADD: Store complete raw XML
         'domain': whois_record.get('domainName', ''),
         'registrar': whois_record.get('registrarName', ''),
         'creation_date': whois_record.get('createdDate', ''),
