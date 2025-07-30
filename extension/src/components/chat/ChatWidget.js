@@ -418,7 +418,7 @@ class ChatWidget {
       // Update tooltip text
       const tooltip = shieldBubble.querySelector('.bubble-tooltip');
       if (tooltip) {
-        tooltip.textContent = 'Security analysis ready! Click to view';
+        tooltip.textContent = 'Security analysis complete! Click me to ask questions if anything seems unclear';
       }
     }
   }
