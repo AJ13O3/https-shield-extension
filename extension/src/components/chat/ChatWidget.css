@@ -523,6 +523,30 @@
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Loading state styles */
+.shield-bubble.loading {
+  opacity: 0.85;
+  cursor: not-allowed;
+}
+
+.shield-bubble.loading .shield-icon {
+  animation: loadingSpin 1.5s linear infinite;
+}
+
+@keyframes loadingSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.shield-bubble.loading .bubble-tooltip {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
 .shield-bubble.expanded {
   width: 64px;
   height: 64px;

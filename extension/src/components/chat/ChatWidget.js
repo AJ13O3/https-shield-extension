@@ -10,6 +10,7 @@ class ChatWidget {
     this.sessionId = this.generateNewSessionId();
     this.isMinimized = false;
     this.isTyping = false;
+    this.isLoading = true;
     
     console.log('ChatWidget initialized with context:', riskContext);
     this.init();
@@ -21,8 +22,37 @@ class ChatWidget {
   async init() {
     this.render();
     this.attachEventListeners();
+    this.setLoadingState(true);
     await this.loadChatHistory();
     await this.showWelcomeMessage();
+  }
+
+  /**
+   * Set loading state and update UI accordingly
+   */
+  setLoadingState(loading) {
+    this.isLoading = loading;
+    const shieldBubble = document.getElementById('shieldBubble');
+    
+    if (!shieldBubble) return;
+    
+    if (loading) {
+      shieldBubble.classList.add('loading');
+      shieldBubble.style.pointerEvents = 'none';
+      
+      // Update tooltip for loading state
+      const tooltip = shieldBubble.querySelector('.bubble-tooltip');
+      if (tooltip) {
+        tooltip.textContent = 'Analyzing security...';
+        tooltip.style.opacity = '1';
+        tooltip.style.transform = 'translateY(0) scale(1)';
+      }
+    } else {
+      shieldBubble.classList.remove('loading');
+      shieldBubble.style.pointerEvents = 'auto';
+      
+      // Tooltip will be updated by transformToMessageBubble()
+    }
   }
 
   /**
@@ -304,7 +334,8 @@ class ChatWidget {
         sessionId: this.sessionId
       });
 
-      // Message is ready, transform bubble
+      // Message is ready, clear loading state and transform bubble
+      this.setLoadingState(false);
       this.transformToMessageBubble();
       
       // Store the response for when user opens chat
@@ -318,6 +349,9 @@ class ChatWidget {
     } catch (error) {
       console.error('Error loading welcome message:', error);
       this.removeTypingIndicator();
+      
+      // Clear loading state even on error so user can still access chat
+      this.setLoadingState(false);
       
       // Fallback to basic welcome message if API fails
       const url = this.riskContext?.url || 'this site';
@@ -333,6 +367,9 @@ class ChatWidget {
         { title: "Stay Safe", question: "Is it safe to continue to this site?" },
         { title: "Next Steps", question: "What should I do?" }
       ]);
+      
+      // Transform bubble to show it's ready (even with fallback)
+      this.transformToMessageBubble();
     }
   }
 
@@ -378,6 +415,12 @@ class ChatWidget {
    * Open chat from shield bubble with animation
    */
   openChatFromShield() {
+    // Don't allow opening chat if still loading
+    if (this.isLoading) {
+      console.log('Chat is still loading, preventing open');
+      return;
+    }
+    
     const shieldBubble = document.getElementById('shieldBubble');
     shieldBubble.style.display = 'none';
     this.show();
