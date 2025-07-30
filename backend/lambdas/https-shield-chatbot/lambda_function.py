@@ -83,7 +83,7 @@ def lambda_handler(event, context):
             logger.info("Generating automatic initial message using LLM")
             
             # Use LLM to generate auto message with suggestions
-            llm_result = generate_response('auto', risk_context, [], response_mode='auto')
+            llm_result = generate_response('auto', risk_context, [])
             
             if llm_result is None:
                 logger.error("LLM failed to generate auto message")
