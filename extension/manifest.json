@@ -33,8 +33,6 @@
       "src/pages/risk-assessment.html",
       "src/pages/risk-assessment.css",
       "src/pages/risk-assessment.js",
-      "src/pages/welcome.html",
-      "src/pages/welcome.js",
       "src/services/api-client.js",
       "src/components/chat/ChatService.js",
       "src/components/chat/ChatWidget.js",

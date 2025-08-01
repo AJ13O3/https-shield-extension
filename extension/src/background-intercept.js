@@ -600,10 +600,8 @@ class HTTPSShieldBackground {
 
     async handleInstallation(details) {
         if (details.reason === 'install') {
-            // First-time installation
-            chrome.tabs.create({
-                url: chrome.runtime.getURL('/src/pages/welcome.html')
-            });
+            // First-time installation - extension loads quietly in background
+            console.log('HTTPS Shield installed successfully');
         }
         // Note: setupInterceptionRules is called after this in the onInstalled listener
     }
